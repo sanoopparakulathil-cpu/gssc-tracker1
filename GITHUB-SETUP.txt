@@ -1,0 +1,134 @@
+GSSC AMC / GMC TRACKER — PUT IT ON GITHUB
+=========================================
+
+GitHub gives you free permanent hosting, keeps every past version, and — the useful
+part — lets you upload new files straight from the browser. No folder dragging. You
+can update the app from your phone.
+
+Do PART A once. After that, updating is PART D, which takes about a minute.
+
+
+BEFORE YOU START — ONE THING TO DECIDE
+--------------------------------------
+Free GitHub Pages hosting requires the repository to be PUBLIC, meaning anyone on the
+internet who finds the address can read the files.
+
+The app CODE is harmless to make public. Your DATA is a different matter — client
+names, AMC numbers, JCC numbers, technician names.
+
+That is why there are two versions of index.html in this folder:
+
+  index.html        - the clean one. No client data at all. USE THIS ON GITHUB.
+                      You load your own months into it with Import (Data & team tab).
+
+  index-with-data.html - has your July and August lists already inside.
+                      Keep this one OFF GitHub, or only use it if you pay for a
+                      private repository with Pages enabled.
+
+Recommended: put the clean one on GitHub, then import your Excel lists into it once.
+Your data then lives on your devices and in your own Google Drive — not on GitHub.
+
+
+PART A — CREATE THE SITE (once, about 10 minutes)
+--------------------------------------------------
+A1. Go to github.com and sign up (free). Any email works.
+
+A2. Once signed in, press the + at the top right → New repository.
+
+A3. Fill in:
+      Repository name:  gssc-tracker
+      Public
+      Tick "Add a README file"
+    Press Create repository.
+
+A4. On the repository page press  Add file → Upload files.
+
+A5. Drag in these five files (or press "choose your files"):
+        index.html            <- the clean one, renamed exactly index.html
+        sw.js
+        manifest.webmanifest
+        icon-192.png
+        icon-512.png
+    Then press  Commit changes.
+
+A6. Press  Settings  (top of the repository) → Pages (left sidebar).
+    Under "Build and deployment":
+        Source: Deploy from a branch
+        Branch: main   /  (root)
+    Press Save.
+
+A7. Wait two or three minutes. Refresh the Pages screen. It will show your address:
+
+        https://YOURNAME.github.io/gssc-tracker/
+
+    That is your app. Write it down.
+
+
+PART B — INSTALL IT
+-------------------
+LAPTOP (Chrome or Edge):
+    Open the address → install icon at the right end of the address bar → Install.
+    If it is not there: menu (3 dots) → Cast, save and share → Install page as app.
+
+PHONE — Android (Chrome):
+    Open the address → menu (3 dots) → Add to Home screen / Install app.
+
+PHONE — iPhone (Safari only):
+    Open the address → Share → Add to Home Screen.
+
+
+PART C — LOAD YOUR DATA
+-----------------------
+Open the app → Data & team tab.
+
+  - Import AMC Excel — select one month, or all twelve at once. Correct the month
+    beside each file on the confirm screen, then save.
+  - Import GMC Excel — new numbers are listed, existing ones refreshed.
+  - Add your technicians under Field team (the clean version starts with three
+    placeholder names — rename or remove them).
+  - Link this device — for phone/laptop sync. See SYNC-SETUP.txt.
+
+Do this on ONE device. If the devices are linked, the other picks it up by itself.
+
+
+PART D — UPDATING LATER (this is the easy part)
+-----------------------------------------------
+When you get a new index.html:
+
+  1. Open your repository on github.com — works on the phone too.
+  2. Press  Add file → Upload files.
+  3. Drop the new index.html in. GitHub replaces the old one automatically.
+  4. Press Commit changes.
+  5. Wait a minute, then open the app and press Ctrl+Shift+R (laptop) or close and
+     reopen it (phone).
+
+No folders. No re-downloading the other four files — only the ones that changed.
+
+If an update goes wrong, GitHub keeps every previous version: repository → the file →
+History → pick the older version → Raw → save it, and upload it back.
+
+
+WHAT ABOUT NETLIFY?
+-------------------
+You can keep both running; they do not interfere. But two addresses means two separate
+copies of the data on each device, which gets confusing. Pick one, install from that
+address on both devices, and remove the other icon.
+
+Moving from Netlify to GitHub: export your data first (Data & team → Export everything
+to Excel), install from the new address, then import it back. Or simply link both
+devices to sync first, and the data follows you.
+
+
+IF SOMETHING GOES WRONG
+-----------------------
+"404 not found"     -> Pages was not switched on, or the branch is wrong. Redo A6.
+                       It can take five minutes the first time.
+App loads but is    -> the file is named something other than index.html. It must be
+blank                  exactly index.html, all lowercase.
+Old version still   -> Ctrl+Shift+R on the laptop. On the phone, close the app fully
+showing                and reopen. Check the version number in the top-right corner.
+Icons missing       -> the two .png files were not uploaded, or were renamed.
+
+
+Prepared for: Sanoop Parakulathil Antony, Technical Supervisor
+Gulf Safety & Security Co. Ltd — Eastern Province, KSA
