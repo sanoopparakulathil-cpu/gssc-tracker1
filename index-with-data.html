@@ -52,6 +52,7 @@
   nav.tabs button[data-tab="cal"]{--tabc:#E07A00}
   nav.tabs button[data-tab="files"]{--tabc:#00838F}
   nav.tabs button[data-tab="duty"]{--tabc:#AD1457}
+  nav.tabs button[data-tab="updates"]{--tabc:#8D6E00}
   nav.tabs button[data-tab="report"]{--tabc:#455A64}
   nav.tabs button[data-tab="data"]{--tabc:#6D4C41}
   nav.tabs button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible{outline:2px solid var(--teal);outline-offset:1px}
@@ -204,7 +205,7 @@
   </div>
   <div class="top-right"><button id="themeBtn" title="Change colours" style="background:none;border:1px solid currentColor;
     color:inherit;border-radius:3px;font-family:inherit;font-size:11px;padding:2px 7px;cursor:pointer;opacity:.8">Theme</button>
-    <span style="opacity:.75">v16</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
+    <span style="opacity:.75">v17</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
 </header>
 
 <nav class="tabs" role="tablist">
@@ -216,6 +217,7 @@
   <button role="tab" data-tab="cal" aria-selected="false">Calendar</button>
   <button role="tab" data-tab="files" aria-selected="false">Reports</button>
   <button role="tab" data-tab="duty" aria-selected="false">Duty</button>
+  <button role="tab" data-tab="updates" aria-selected="false">Updates</button>
   <button role="tab" data-tab="report" aria-selected="false">Month report</button>
   <button role="tab" data-tab="data" aria-selected="false">Data &amp; team</button>
 </nav>
@@ -344,18 +346,79 @@ function syncCfgSave(){
   try{localStorage.setItem("gssc-sync-cfg",JSON.stringify({url:SYNC.url,key:SYNC.key,last:SYNC.last}));}catch(e){}}
 function slim(r){var o={};for(var k in r)if(k!=="data")o[k]=r[k];return o;}
 function noMod(r){var o={};for(var k in r)if(k!=="mod"&&k!=="data")o[k]=r[k];return JSON.stringify(o);}
+var LASTSEEN={};
 function snapshot(){
-  SNAP={};COLL.forEach(function(k){var m={};(state[k]||[]).forEach(function(r){m[r.id]=noMod(r);});SNAP[k]=m;});}
+  SNAP={};COLL.forEach(function(k){var m={};(state[k]||[]).forEach(function(r){
+    m[r.id]=noMod(r);LASTSEEN[k+":"+r.id]=logLabel(k,r);});SNAP[k]=m;});}
+
+/* ---------- activity log: what changed, most recent first ---------- */
+var LOGNAME={contracts:"Contract",amc:"AMC service",gmc:"GMC job",oncall:"On-call",
+  duties:"Duty",techs:"Technician",files:"Document"};
+function logLabel(k,r){
+  if(!r)return "";
+  if(k==="amc")return (r.client||"?")+(r.serviceNo?" \u2014 service "+r.serviceNo:"");
+  if(k==="gmc")return (r.gmcNo?r.gmcNo+" \u2014 ":"")+(r.client||"?");
+  if(k==="oncall")return (r.client||"?")+(r.date?" ("+fmt(r.date)+")":"");
+  if(k==="duties")return (r.siteText||"?")+(r.date?" ("+fmt(r.date)+")":"");
+  if(k==="techs")return r.name||"?";
+  if(k==="files")return r.title||r.fileName||"?";
+  if(k==="contracts")return (r.site||"?")+(r.amcNo?" ("+r.amcNo+")":"");
+  return r.id||"";}
+function logPush(list){
+  if(!list.length)return;
+  state.log=state.log||[];
+  if(list.length>8){
+    state.log.unshift({t:Date.now(),act:"bulk",k:"",label:list.length+" records added or changed"});}
+  else list.forEach(function(e){state.log.unshift(e);});
+  if(state.log.length>60)state.log=state.log.slice(0,60);}
+function logText(e){
+  var what=e.k?(LOGNAME[e.k]||e.k):"";
+  if(e.act==="bulk")return e.label;
+  if(e.act==="add")return what+" added \u2014 "+e.label;
+  if(e.act==="del")return what+" removed \u2014 "+e.label;
+  return what+" changed \u2014 "+e.label;}
+function agoText(ms){
+  var s=Math.floor((Date.now()-ms)/1000);
+  if(s<60)return "just now";
+  if(s<3600)return Math.floor(s/60)+" min ago";
+  if(s<86400)return Math.floor(s/3600)+" hr ago";
+  var d=Math.floor(s/86400);
+  return d===1?"yesterday":d+" days ago";}
+function viewUpdates(){
+  var L=(state.log||[]).slice(0,20);
+  var h='<div class="card"><h2>Last 20 updates <span class="count">'+L.length+'</span></h2><div class="body">';
+  if(!L.length)h+='<div class="empty"><b>Nothing logged yet</b>Every add, change and delete will show here as you work.</div>';
+  else{
+    h+='<div class="tbl-wrap"><table class="rsp"><thead><tr><th>When</th><th>What happened</th></tr></thead><tbody>';
+    L.forEach(function(e){
+      var dt=new Date(e.t);
+      h+='<tr><td data-l="When" style="white-space:nowrap">'+esc(agoText(e.t))
+        +'<div class="hint" style="margin:0">'+esc(fmt(iso(dt))+" "+pad(dt.getHours())+":"+pad(dt.getMinutes()))+'</div></td>'
+        +'<td data-l="What">'+esc(logText(e))+'</td></tr>';});
+    h+='</tbody></table></div>';}
+  h+='<div class="toolbar" style="margin:10px 0 0"><span class="spacer"></span>'
+    +'<button class="btn ghost" id="logClear">Clear the list</button></div>'
+    +'<p class="hint">This list is kept on this device. It records what changed, not the old values.</p>';
+  h+='</div></div>';
+  return h;}
+
 function stampChanges(){
   var now=Date.now();state.tomb=state.tomb||{};
+  var evts=[],known=SNAP&&Object.keys(SNAP).length>0;
   COLL.forEach(function(k){
-    var prev=SNAP[k]||{},seen={};
+    var prev=SNAP[k]||{},seen={},byId={};
+    (state[k]||[]).forEach(function(r){byId[r.id]=r;});
     (state[k]||[]).forEach(function(r){
       if(!r.id)r.id=uid();
       seen[r.id]=1;var j=noMod(r);
-      if(prev[r.id]!==j){r.mod=now;delete state.tomb[k+":"+r.id];}
+      if(prev[r.id]!==j){
+        if(known)evts.push({t:now,k:k,act:(prev[r.id]===undefined?"add":"edit"),label:logLabel(k,r)});
+        r.mod=now;delete state.tomb[k+":"+r.id];}
       else if(!r.mod)r.mod=now;});
-    for(var id in prev)if(!seen[id])state.tomb[k+":"+id]=now;});
+    for(var id in prev)if(!seen[id]){
+      if(known)evts.push({t:now,k:k,act:"del",label:LASTSEEN[k+":"+id]||""});
+      state.tomb[k+":"+id]=now;}});
+  logPush(evts);
   var cut=Date.now()-90*864e5;
   for(var t in state.tomb)if(state.tomb[t]<cut)delete state.tomb[t];
   state.updatedAt=now;snapshot();}
@@ -543,6 +606,7 @@ function load(){
     if(!state||!state.amc||!state.contracts)state=JSON.parse(JSON.stringify(SEED));
     if(!state.oncall)state.oncall=[];
     if(!state.files)state.files=[];
+    if(!state.log)state.log=[];
     boot();
   }).catch(function(){state=JSON.parse(JSON.stringify(SEED));boot();});
 }
@@ -592,7 +656,7 @@ function render(){
     +'<span style="margin-left:auto"></span>'
     +'<button class="btn ghost" id="genNext">Generate '+mLabel(mAdd(m,1))+' schedule</button>';
   document.getElementById("view").innerHTML=
-    ({dash:viewDash,search:viewSearch,amc:viewAmc,gmc:viewGmc,oncall:viewCall,cal:viewCal,files:viewFiles,duty:viewDuty,report:viewReport,data:viewData})[tab]();
+    ({dash:viewDash,search:viewSearch,amc:viewAmc,gmc:viewGmc,oncall:viewCall,cal:viewCal,files:viewFiles,duty:viewDuty,updates:viewUpdates,report:viewReport,data:viewData})[tab]();
   wire();
   paintSync();
   if(state.files&&state.files.length)paintThumbs();
@@ -1930,6 +1994,7 @@ function viewData(){
     +'<p class="hint">Two ways to build a month: generate it automatically from the contract list using each contract\u2019s service frequency, or import the Excel schedule you already prepare.</p>'
     +'<div class="toolbar"><button class="btn" id="genNext2">Generate '+esc(mLabel(mAdd(m,1)))+' from contracts</button>'
     +'<button class="btn ghost" data-import="amc">Import AMC Excel \u2014 up to 12 months at once</button>'
+    +'<button class="btn ghost" data-gsheet="amc">From Google Sheet link</button>'
     +'<button class="btn ghost" data-paste="amc">Paste AMC list (from PDF)</button></div>'
     +'<p class="hint">Select all twelve monthly files together, or one workbook with a sheet per month. The month is read from the '
     +'file or sheet name (&ldquo;AMC_Schedule_August_2026&rdquo;, &ldquo;Mar-2026&rdquo;) and you can correct it on the confirm screen '
@@ -1938,6 +2003,7 @@ function viewData(){
   h+='<div class="card"><h2>GMC list</h2><div class="body">'
     +'<p class="hint">Import your GMC status sheet any time. Numbers already in the register are updated (JCC, status, remarks); numbers not seen before are added as new jobs and reported to you.</p>'
     +'<div class="toolbar"><button class="btn" data-import="gmc">Import GMC Excel</button>'
+    +'<button class="btn ghost" data-gsheet="gmc">From Google Sheet link</button>'
     +'<button class="btn ghost" data-paste="gmc">Paste GMC list (from PDF)</button></div>'
     +'<p class="hint">Highest GMC number on record: <b>'+esc(maxGmc())+'</b></p></div></div>';
 
@@ -2506,6 +2572,63 @@ function amcBatchModal(entries){
       var ix=+e.target.dataset.mrow,c=document.getElementById("ex"+ix);
       if(c)c.textContent=amcOf(e.target.value).length||"\u2014";}});
 }
+
+/* ---------- import straight from a Google Sheet link ---------- */
+function gsId(u){var m=String(u||"").match(/\/spreadsheets\/d\/([a-zA-Z0-9-_]+)/);return m?m[1]:"";}
+function gsGid(u){var m=String(u||"").match(/[#&?]gid=([0-9]+)/);return m?m[1]:"";}
+function gsFetch(url,cb){
+  var id=gsId(url);
+  if(!id)return cb(null,"That does not look like a Google Sheet link. It should contain /spreadsheets/d/");
+  var gid=gsGid(url);
+  var csv="https://docs.google.com/spreadsheets/d/"+id+"/gviz/tq?tqx=out:csv"+(gid?"&gid="+gid:"");
+  fetch(csv,{credentials:"omit"}).then(function(r){
+    if(!r.ok)throw new Error("HTTP "+r.status);
+    return r.text();
+  }).then(function(txt){
+    if(txt.indexOf("<HTML")>-1||txt.indexOf("<!DOCTYPE")>-1)
+      throw new Error("locked");
+    var wb=XLSX.read(txt,{type:"string"});
+    cb(wb.SheetNames.map(function(n){
+      return {sheet:n,rows:XLSX.utils.sheet_to_json(wb.Sheets[n],{header:1,defval:"",raw:false})};}),null);
+  }).catch(function(e){
+    cb(null,e.message==="locked"
+      ?"That sheet is private. In Google Sheets press Share, set \u201cAnyone with the link\u201d to Viewer, then try again \u2014 or use File \u203a Download \u203a Excel and import the file."
+      :"Could not reach the sheet ("+e.message+"). Check the link, or download it as Excel instead.");});}
+function gsModal(kind){
+  var body='<div class="field"><label>Google Sheet link</label>'
+    +'<input id="gsUrl" placeholder="https://docs.google.com/spreadsheets/d/..." autocomplete="off"></div>'
+    +'<p class="hint">Open the sheet in your browser and copy the address bar. '
+    +'The sheet must be shared as \u201cAnyone with the link \u2014 Viewer\u201d, otherwise it cannot be read. '
+    +'If it stays private, use File \u203a Download \u203a Microsoft Excel and import that file instead.</p>'
+    +'<div id="gsBusy" class="hint" style="display:none">Reading the sheet\u2026</div>';
+  openModal("Import from Google Sheet",body,function(){
+    var u=val("gsUrl");
+    if(!u)return mErr("Paste the link first.");
+    var bz=document.getElementById("gsBusy");if(bz)bz.style.display="";
+    gsFetch(u,function(sheets,err){
+      if(bz)bz.style.display="none";
+      if(err)return mErr(err);
+      var parse=(kind==="gmc"?parseGmc:parseAmc);
+      var usable=sheets.filter(function(s){return !!parse(s.rows);});
+      if(!usable.length)return mErr(kind==="gmc"
+        ?"No GMC table found in that sheet. It needs a client column and a GMC number column."
+        :"No AMC table found in that sheet. It needs an AMC number column and a site name column.");
+      closeModal();
+      if(kind==="gmc"){
+        var all=[],sm="";
+        usable.forEach(function(s){
+          var r=parseGmc(s.rows);
+          if(r){all=all.concat(r);sm=detectMonth(s.sheet)||sm;}});
+        importGmcRecords(all,sm);
+        return;}
+      var entries=usable.map(function(s){
+        return {label:"Google Sheet \u203a "+s.sheet,
+          month:detectMonth(s.sheet)||state.curMonth,
+          recs:parseAmc(s.rows)};});
+      entries.sort(function(a,b){return a.month<b.month?-1:1;});
+      amcBatchModal(entries);});
+  },"",false,null,null);}
+
 function importAmcFiles(files){
   var entries=[],left=files.length;
   if(!left)return;
@@ -2807,6 +2930,8 @@ function wire(){
     if(b.dataset.waedit){waModal(+b.dataset.waedit);return;}
     if(b.dataset.waedit===""){waModal(0);return;}
     if(b.id==="waAdd"){waModal(-1);return;}
+    if(b.id==="logClear"){state.log=[];save();render();toast("List cleared");return;}
+    if(b.dataset.gsheet){gsModal(b.dataset.gsheet);return;}
     if(b.dataset.add==="duty"){dutyModal(null,iso(today()));return;}
     if(b.dataset.add==="tech"){techModal(null);return;}
     if(b.dataset.bulk){bulkDateModal();return;}
