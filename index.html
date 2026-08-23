@@ -13,15 +13,15 @@
   :root{--navy:#1F3864;--navy-2:#2C4A80;--teal:#2082A5;--red:#C00000;--amber:#B26A00;
     --green:#1E7A54;--ink:#1A1D23;--muted:#5F6B7C;--line:#D9DEE7;--line-soft:#EBEEF4;
     --paper:#F4F6FA;--card:#FFFFFF;--head:#1F3864;--headink:#FFFFFF;--headsub:#B9C6DE;
-    --rowhover:#F7F9FC;--thbg:#FAFBFD;--soft:#F7F9FC;--wknd:#E6F5E9}
+    --rowhover:#F7F9FC;--thbg:#FAFBFD;--soft:#F7F9FC;--wknd:#FCE9E9;--wkdy:#EDF6ED}
   html[data-theme="dark"]{--navy:#8FB3E8;--navy-2:#A9C6F0;--teal:#4FB6D8;--red:#FF8A8A;--amber:#F0B429;
     --green:#5FD3A0;--ink:#E8ECF3;--muted:#9AA7BC;--line:#2C3444;--line-soft:#242B38;
     --paper:#12161F;--card:#1A2029;--head:#0E1218;--headink:#E8ECF3;--headsub:#8FA3C6;
-    --rowhover:#212936;--thbg:#161C26;--soft:#212936;--wknd:#16251A}
+    --rowhover:#212936;--thbg:#161C26;--soft:#212936;--wknd:#2A1A1A;--wkdy:#16241A}
   html[data-theme="night"]{--navy:#C7D2E8;--navy-2:#DDE5F5;--teal:#7FD4E8;--red:#FF9A9A;--amber:#FFC857;
     --green:#7FE0B4;--ink:#F2F4F8;--muted:#A8B2C4;--line:#333333;--line-soft:#242424;
     --paper:#000000;--card:#141414;--head:#000000;--headink:#F2F4F8;--headsub:#9AA7BC;
-    --rowhover:#1E1E1E;--thbg:#111111;--soft:#1A1A1A;--wknd:#101E14}
+    --rowhover:#1E1E1E;--thbg:#111111;--soft:#1A1A1A;--wknd:#241010;--wkdy:#101E14}
   html[data-theme="teal"]{--navy:#0E5A6B;--navy-2:#13738A;--teal:#0E7C8C;--head:#0E5A6B;--paper:#F1F7F8;--card:#FFFFFF}
   html[data-theme="graphite"]{--navy:#33383F;--navy-2:#454B54;--teal:#5C7A8A;--head:#2B3037;--paper:#F5F6F7;--card:#FFFFFF}
   *{box-sizing:border-box}
@@ -40,7 +40,20 @@
   nav.tabs button{appearance:none;background:none;border:none;font-family:inherit;font-size:12.5px;font-weight:600;
     letter-spacing:.05em;text-transform:uppercase;color:var(--muted);padding:12px 15px;cursor:pointer;white-space:nowrap;border-bottom:3px solid transparent}
   nav.tabs button:hover{color:var(--navy);background:var(--line-soft)}
-  nav.tabs button[aria-selected="true"]{color:var(--navy);border-bottom-color:var(--teal)}
+  nav.tabs button[aria-selected="true"]{color:var(--tabc,var(--navy));border-bottom-color:var(--tabc,var(--teal))}
+  nav.tabs button::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--tabc,var(--muted));
+    display:inline-block;margin-right:6px;vertical-align:1px;opacity:.5}
+  nav.tabs button[aria-selected="true"]::before{opacity:1}
+  nav.tabs button[data-tab="dash"]{--tabc:#1E5AA8}
+  nav.tabs button[data-tab="search"]{--tabc:#0E8A7D}
+  nav.tabs button[data-tab="amc"]{--tabc:#2E7D32}
+  nav.tabs button[data-tab="gmc"]{--tabc:#6A3FB5}
+  nav.tabs button[data-tab="oncall"]{--tabc:#C62828}
+  nav.tabs button[data-tab="cal"]{--tabc:#E07A00}
+  nav.tabs button[data-tab="files"]{--tabc:#00838F}
+  nav.tabs button[data-tab="duty"]{--tabc:#AD1457}
+  nav.tabs button[data-tab="report"]{--tabc:#455A64}
+  nav.tabs button[data-tab="data"]{--tabc:#6D4C41}
   nav.tabs button:focus-visible,input:focus-visible,select:focus-visible,textarea:focus-visible,button:focus-visible{outline:2px solid var(--teal);outline-offset:1px}
   #monthbar{background:var(--line-soft);border-bottom:1px solid var(--line);padding:8px 16px;display:flex;
     align-items:center;gap:10px;flex-wrap:wrap;font-size:13px}
@@ -191,7 +204,7 @@
   </div>
   <div class="top-right"><button id="themeBtn" title="Change colours" style="background:none;border:1px solid currentColor;
     color:inherit;border-radius:3px;font-family:inherit;font-size:11px;padding:2px 7px;cursor:pointer;opacity:.8">Theme</button>
-    <span style="opacity:.75">v15</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
+    <span style="opacity:.75">v16</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
 </header>
 
 <nav class="tabs" role="tablist">
@@ -1004,6 +1017,51 @@ function dutyCopy(ds){
   if(navigator.clipboard&&navigator.clipboard.writeText){
     navigator.clipboard.writeText(txt).then(function(){toast("Duty schedule copied");},fallback);}
   else fallback();}
+function waClean(n){return String(n||"").replace(/[^0-9]/g,"");}
+function dutySendTo(num,ds){
+  var n=waClean(num);
+  if(!n)return toast("That number looks wrong");
+  window.open("https://wa.me/"+n+"?text="+encodeURIComponent(dutyMessage(ds)),"_blank");}
+function waModal(ix){
+  var c=(ix>=0?SETT.waList[ix]:null)||{name:"",num:""};
+  var body='<div class="field"><label>Name shown on the button</label>'
+    +'<input id="wN" value="'+esc(c.name)+'" placeholder="e.g. Saran, Office"></div>'
+    +'<div class="field"><label>WhatsApp number</label>'
+    +'<input id="wU" value="'+esc(c.num)+'" placeholder="9665XXXXXXXX" inputmode="tel"></div>'
+    +(pickerOk()?'<div class="field"><button class="btn ghost" id="wPick" type="button">Pick from phone contacts</button></div>':'')
+    +'<p class="hint">Country code first, no plus sign and no spaces. Saudi mobiles start 9665.</p>';
+  openModal(ix>=0?"Edit contact":"Add WhatsApp contact",body,function(){
+    if(!val("wN"))return mErr("Give the button a name.");
+    if(waClean(val("wU")).length<8)return mErr("Enter the full number with country code.");
+    var rec={name:val("wN"),num:waClean(val("wU"))};
+    if(ix>=0)SETT.waList[ix]=rec;else SETT.waList.push(rec);
+    settSave();closeModal();render();toast("Contact saved");
+  },ix>=0?'<button class="btn danger" id="mDel">Remove</button>':"",false,null,null);
+  var dl=document.getElementById("mDel");
+  if(dl)dl.onclick=function(){SETT.waList.splice(ix,1);settSave();closeModal();render();toast("Removed");};
+  var pk=document.getElementById("wPick");
+  if(pk)pk.onclick=function(){pickContact(function(c2){
+    if(c2.name&&!val("wN"))document.getElementById("wN").value=c2.name;
+    document.getElementById("wU").value=c2.num;});};}
+
+/* ---------- phone contact picker (Chrome on Android) ---------- */
+function pickerOk(){
+  try{return !!(navigator.contacts&&navigator.contacts.select&&window.ContactsManager);}
+  catch(e){return false;}}
+function pickContact(cb){
+  if(!pickerOk())return toast("Your phone does not offer the contact picker \u2014 type the number");
+  navigator.contacts.select(["name","tel"],{multiple:false}).then(function(list){
+    if(!list||!list.length)return;
+    var c=list[0];
+    var nm=(c.name&&c.name.length)?c.name[0]:"";
+    var tel=(c.tel&&c.tel.length)?c.tel[0]:"";
+    if(!tel)return toast("That contact has no number saved");
+    var n=waClean(tel);
+    if(n.length===9&&n.charAt(0)==="5")n="966"+n;
+    else if(n.length===10&&n.charAt(0)==="0")n="966"+n.slice(1);
+    cb({name:nm,num:n});
+  }).catch(function(){toast("Contact picker was closed");});}
+
 function dutyWhatsApp(ds){
   window.open("https://wa.me/?text="+encodeURIComponent(dutyMessage(ds)),"_blank");}
 
@@ -1018,7 +1076,10 @@ function viewDuty(){
     +'<strong style="margin-left:4px;color:var(--navy)">'+_wn+'</strong>'
     +'<span class="spacer"></span>'
     +'<button class="btn ghost" data-dcopy="1">Copy text</button>'
-    +'<button class="btn" data-dshare="1">Share to WhatsApp</button></div>';
+    +'<button class="btn" data-dshare="1">Share</button>'
+    +(SETT.waList||[]).map(function(c,i){
+      return '<button class="btn ghost" data-dsend="'+i+'">&#10148; '+esc(c.name)+'</button>';}).join("")
+    +'</div>';
   if(!_dl.length)dayH+='<div class="empty"><b>Nothing scheduled for '+fmt(_dd)+'</b>Press + on the board below to put men on a site.</div>';
   else{
     dayH+='<div class="tbl-wrap"><table class="rsp"><thead><tr><th>Name</th><th>Site &amp; location</th><th>Activity</th></tr></thead><tbody>';
@@ -1030,7 +1091,8 @@ function viewDuty(){
         +'<td data-l="Activity">'+esc(actx)+'</td></tr>';});
     dayH+='</tbody></table></div>'
       +'<p class="hint" style="margin:8px 0 0">'+_dl.length+' site(s), '+Object.keys(_men).length+' man. '
-      +'Share opens your phone\u2019s share sheet \u2014 pick the WhatsApp group from there.</p>';}
+      +'Share opens the phone share sheet \u2014 choose the WhatsApp group there. '
+      +'The named buttons go straight to one person. Add them under Data &amp; team.</p>';}
   dayH+='</div></div>';
 
   var days=[],i;for(i=0;i<7;i++)days.push(addDays(weekStart,i));
@@ -1052,7 +1114,7 @@ function viewDuty(){
     +'<div class="body flush"><div class="board-wrap"><table class="board"><thead><tr><th class="rowh">'
     +(boardBy==="tech"?"Technician":"Site / job")+'</th>';
   days.forEach(function(d,ix){h+='<th class="day'+(iso(d)===ts?" today":"")+'"'
-    +(isWeekend(d)?' style="background:var(--wknd)"':'')+'>'+wk[ix]+'<em>'+pad(d.getDate())+'</em></th>';});
+    +' style="background:var('+(isWeekend(d)?"--wknd":"--wkdy")+')">'+wk[ix]+'<em>'+pad(d.getDate())+'</em></th>';});
   h+='</tr></thead><tbody>';
 
   if(boardBy==="tech"){
@@ -1509,14 +1571,14 @@ var CATSHORT={"Service report (signed)":"Report","Site survey":"Survey","Checkli
 function jobFree(c){return c==="Site survey"||c==="Checklist"||c==="Drawing / layout"
   ||c==="Delivery note / material"||c==="Purchase order"||c==="Letter / correspondence"
   ||c==="Photo (general)"||c==="Other document";}
-var calMonth="",SETT={email:"",weekend:"fri-sat",theme:"classic"};
+var calMonth="",SETT={email:"",weekend:"fri-sat",theme:"classic",waList:[]};
 var THEMES=[["classic","Classic navy"],["dark","Dark grey"],["night","Black"],["teal","Teal"],["graphite","Graphite"]];
 function applyTheme(){
   document.documentElement.setAttribute("data-theme",SETT.theme||"classic");
   var mt=document.querySelector('meta[name="theme-color"]');
   if(mt)mt.setAttribute("content",SETT.theme==="dark"?"#0E1218":(SETT.theme==="night"?"#000000":
     (SETT.theme==="teal"?"#0E5A6B":(SETT.theme==="graphite"?"#2B3037":"#1F3864"))));}
-function settLoad(){try{var c=JSON.parse(localStorage.getItem("gssc-sett")||"{}");SETT.email=c.email||"";SETT.weekend=c.weekend||"fri-sat";SETT.theme=c.theme||"classic";}catch(e){}applyTheme();}
+function settLoad(){try{var c=JSON.parse(localStorage.getItem("gssc-sett")||"{}");SETT.email=c.email||"";SETT.weekend=c.weekend||"fri-sat";SETT.theme=c.theme||"classic";SETT.waList=c.waList||[];}catch(e){}applyTheme();}
 function settSave(){try{localStorage.setItem("gssc-sett",JSON.stringify(SETT));}catch(e){}}
 function isWeekend(d){var w=d.getDay();return SETT.weekend==="sat-sun"?(w===6||w===0):(w===5||w===6);}
 
@@ -1633,7 +1695,7 @@ function viewCal(){
     +'<div class="body flush"><div class="board-wrap"><table class="board" style="min-width:820px"><thead><tr>'
     +["Mon","Tue","Wed","Thu","Fri","Sat","Sun"].map(function(d,di){
       var we=SETT.weekend==="sat-sun"?(di===5||di===6):(di===4||di===5);
-      return '<th class="day"'+(we?' style="background:var(--wknd)"':'')+'>'+d+'</th>';}).join("")+'</tr></thead><tbody>';
+      return '<th class="day" style="background:var('+(we?"--wknd":"--wkdy")+')">'+d+'</th>';}).join("")+'</tr></thead><tbody>';
   var cur=new Date(start.getTime()),guard=0;
   while(guard++<8){
     h+='<tr>';
@@ -1641,7 +1703,8 @@ function viewCal(){
       var ds=iso(cur),inMonth=cur.getMonth()===mo,isT=ds===t;
       var list=evs[ds]||[];
       var wknd=isWeekend(cur);
-      h+='<td style="vertical-align:top;min-width:112px;'+(inMonth?(wknd?"background:var(--wknd);":""):"background:#FAFBFD;opacity:.55;")
+      h+='<td style="vertical-align:top;min-width:112px;'
+        +(inMonth?("background:var("+(wknd?"--wknd":"--wkdy")+");"):"background:#FAFBFD;opacity:.55;")
         +(isT?"outline:2px solid var(--teal);outline-offset:-2px;":"")+'">'
         +'<div style="font-weight:700;font-size:13px;color:'+(isT?"var(--teal)":"var(--navy)")+';margin-bottom:3px">'
         +cur.getDate()+'</div>';
@@ -1660,6 +1723,8 @@ function viewCal(){
     +'<span><i style="background:var(--navy)"></i>AMC due</span><span><i style="background:var(--teal)"></i>GMC due</span>'
     +'<span><i style="background:var(--green)"></i>Completed</span><span><i style="background:var(--red)"></i>On-call</span>'
     +'<span><i style="background:#9AA5B5"></i>Duty</span>'
+    +'<span><i style="background:var(--wknd);border:1px solid var(--line)"></i>Weekend (Fri/Sat)</span>'
+    +'<span><i style="background:var(--wkdy);border:1px solid var(--line)"></i>Working day</span>'
     +'<span>Press + on a day to book a service for that date.</span></div></div></div>';
 
   var soon=jobEvents().filter(function(e){return e.date>=t;}).sort(function(a,b){return a.date<b.date?-1:1;}).slice(0,15);
@@ -1905,6 +1970,19 @@ function viewData(){
     +'<button class="btn ghost" data-export="all">Export everything to Excel</button>'
     +'<button class="btn danger" data-reset="1">Reset to the uploaded August lists</button></div>'
     +'<p class="hint">Data lives on this device only. Export to Excel regularly and keep a copy on the office drive.</p></div></div>';
+
+  h+='<div class="card"><h2>WhatsApp send list <span class="count">'+((SETT.waList||[]).length)+'</span></h2>'
+    +'<div class="body"><p class="hint" style="margin-top:0">People here get a one-tap button on the duty day card. '
+    +'WhatsApp does not allow sending straight into a group \u2014 for a group use the Share button and pick it from the share sheet.</p>'
+    +'<div class="tbl-wrap"><table class="rsp"><thead><tr><th>Name</th><th>Number</th><th></th></tr></thead><tbody>';
+  if(!(SETT.waList||[]).length)h+='<tr><td colspan="3"><div class="empty"><b>No one saved yet</b>Add the people you send the duty schedule to.</div></td></tr>';
+  (SETT.waList||[]).forEach(function(c,i){
+    h+='<tr><td data-l="Name">'+esc(c.name)+'</td><td class="num" data-l="Number">+'+esc(c.num)+'</td>'
+      +'<td data-l=""><button class="link" data-waedit="'+i+'">Edit</button></td></tr>';});
+  h+='</tbody></table></div>'
+    +'<div class="toolbar" style="margin:10px 0 0"><span class="spacer"></span>'
+    +'<button class="btn" id="waAdd">Add contact</button></div></div></div>';
+
   return h;
 }
 
@@ -2093,7 +2171,10 @@ function callModal(o){
     +'<div class="field"><label>Date of call</label><input type="date" id="fDate" value="'+esc(o.date)+'"></div>'
     +'<div class="field"><label>Time received</label><input type="time" id="fTime" value="'+esc(o.time)+'"></div>'
     +'<div class="field"><label>Who called (name)</label><input id="fCaller" value="'+esc(o.caller)+'"></div>'
-    +'<div class="field"><label>Contact number</label><input id="fPhone" value="'+esc(o.phone||"")+'"></div></div>'
+    +'<div class="field"><label>Contact number</label>'
+    +'<div style="display:flex;gap:6px"><input id="fPhone" inputmode="tel" value="'+esc(o.phone||"")+'" style="flex:1">'
+    +(pickerOk()?'<button class="btn ghost" id="fPick" type="button" title="Pick from phone contacts">Contacts</button>':'')
+    +'</div></div></div>'
     +'<div class="field"><label>Client / site</label><input id="fClient" list="clientNames" value="'+esc(o.client)+'">'
     +'<datalist id="clientNames">'+Object.keys(clients).map(function(k){return '<option value="'+esc(k)+'">';}).join("")+'</datalist></div>'
     +'<div class="field"><label>Issue reported</label><textarea id="fIssue">'+esc(o.issue)+'</textarea></div>'
@@ -2119,6 +2200,11 @@ function callModal(o){
     "call-"+(o.id||"new"),(o.client?("On-call \u00b7 "+o.client):"New on-call"));
   var d=document.getElementById("mDel");
   if(d)d.onclick=function(){state.oncall=state.oncall.filter(function(x){return x.id!==o.id;});closeModal();commit("Deleted");};
+  var pkc=document.getElementById("fPick");
+  if(pkc)pkc.onclick=function(){pickContact(function(c2){
+    var ph=document.getElementById("fPhone");if(ph)ph.value=c2.num;
+    var cn=document.getElementById("fCaller");
+    if(cn&&!cn.value&&c2.name)cn.value=c2.name;});};
 }
 
 function dutyModal(duty,pd,pt){
@@ -2716,6 +2802,11 @@ function wire(){
     if(b.dataset.dday){dutyDay=null;render();return;}
     if(b.dataset.dcopy){dutyCopy(dutyDayDate());return;}
     if(b.dataset.dshare){dutyShare(dutyDayDate());return;}
+    if(b.dataset.dsend){var wc=SETT.waList[+b.dataset.dsend];if(wc)dutySendTo(wc.num,dutyDayDate());return;}
+    if(b.dataset.dsend===""){var wc0=SETT.waList[0];if(wc0)dutySendTo(wc0.num,dutyDayDate());return;}
+    if(b.dataset.waedit){waModal(+b.dataset.waedit);return;}
+    if(b.dataset.waedit===""){waModal(0);return;}
+    if(b.id==="waAdd"){waModal(-1);return;}
     if(b.dataset.add==="duty"){dutyModal(null,iso(today()));return;}
     if(b.dataset.add==="tech"){techModal(null);return;}
     if(b.dataset.bulk){bulkDateModal();return;}
