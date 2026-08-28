@@ -24,7 +24,7 @@ var KEY = "CHANGE-THIS-TO-A-LONG-SECRET-abc123xyz789";
  *        keeps working.
  */
 var CLAUDE_KEY = "";
-var CLAUDE_MODEL = "claude-sonnet-4-6";
+var CLAUDE_MODEL = "claude-sonnet-5";
 
 var FILE_NAME = "gssc-tracker-data.json";
 
@@ -134,6 +134,8 @@ function claudeAsk_(body) {
 /* the app sends a photo of a service report to be read */
 function claudeRead_(body) {
   var system = "You read photographs of fire-safety service reports and job sheets. "
+    + "The photo may be angled, shadowed or partly blurred - read whatever you can. "
+    + "Partial readings are useful: fill in every field you can make out, even if others are unreadable. "
     + "Reply with ONE JSON object and nothing else - no explanation, no markdown fences. "
     + "Use these keys: srNo, jccNo, jccDate, date, site, amcNo, gmcNo, system, technicians, status, remarks. "
     + "srNo is the service report number, often written SR No or SF/ followed by digits. "
@@ -147,7 +149,7 @@ function claudeRead_(body) {
     + "Use an empty string for anything you cannot read clearly. Never guess a number you cannot see.";
   var content = [
     { type: "image", source: { type: "base64", media_type: body.mime || "image/jpeg", data: body.data } },
-    { type: "text", text: "Read this service report and return the JSON object." }
+    { type: "text", text: "Read this service report and return the JSON object. Fill in every field you can make out." }
   ];
   var r = claudeCall_([{ role: "user", content: content }], system, 800);
   if (!r.ok) return json_(r);

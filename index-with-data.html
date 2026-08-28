@@ -230,7 +230,7 @@
   </div>
   <div class="top-right"><button id="themeBtn" title="Change colours" style="background:none;border:1px solid currentColor;
     color:inherit;border-radius:3px;font-family:inherit;font-size:11px;padding:2px 7px;cursor:pointer;opacity:.8">Theme</button>
-    <span style="opacity:.75">v20</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
+    <span style="opacity:.75">v21</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
 </header>
 
 <nav class="tabs" role="tablist">
@@ -489,13 +489,31 @@ var LASTREAD=null;
 function agentReadFile(file){
   if(AGENTBUSY)return;
   AGENTBUSY=true;render();
-  shrinkImage(file,function(dataUrl,mime){
+  readImage(file,function(dataUrl,mime,dim){
     var b64=String(dataUrl).split(",")[1]||"";
+    if(!b64){AGENTBUSY=false;CHAT.push({r:"err",t:"That file could not be opened as a picture."});
+      chatSave();render();return;}
     agentPost({action:"read",data:b64,mime:mime||"image/jpeg"},function(o){
       AGENTBUSY=false;
       if(!o.ok){CHAT.push({r:"err",t:o.error||"Could not read that picture."});chatSave();render();return;}
-      LASTREAD=o.fields||{};
-      render();readConfirmModal(LASTREAD);});});}
+      var f=o.fields||{};
+      var filled=0;
+      ["srNo","jccNo","date","site","amcNo","gmcNo","system","remarks"].forEach(function(k){
+        if(f[k]&&String(f[k]).trim())filled++;});
+      if(f.technicians&&f.technicians.length)filled++;
+      if(!filled){
+        CHAT.push({r:"err",t:"Nothing could be read from that picture"
+          +(dim?" ("+dim+")":"")+".\n\nWhat usually fixes it:\n"
+          +"\u2022 Fill the frame with the page \u2014 no desk, no hands\n"
+          +"\u2022 Hold the phone flat above it, not at an angle\n"
+          +"\u2022 Good light, no shadow across the paper\n"
+          +"\u2022 Tap the screen to focus before taking the photo\n"
+          +"\u2022 One page at a time\n\n"
+          +"If the form is handwritten and faint, type the fields in by hand instead."});
+        chatSave();render();return;}
+      LASTREAD=f;
+      CHAT.push({r:"ai",t:"Read the report and found "+filled+" field(s). Check them before saving."});
+      chatSave();render();readConfirmModal(f);});});}
 
 function readConfirmModal(f){
   var g=function(k){return esc(f&&f[k]?String(f[k]):"");};
@@ -1505,6 +1523,30 @@ function shrinkCanvas(src,cb,orig){
     }catch(err){cb(orig,"");}};
   img.onerror=function(){cb(orig,"");};
   img.src=src;}
+/* Storing a site photo and reading a printed form need different pictures.
+   For reading we keep far more detail, or the small print is lost. */
+function readCanvas(src,cb){
+  var img=new Image();
+  img.onload=function(){
+    try{
+      var MAX=2200,w=img.width||1,h=img.height||1;
+      if(w>MAX||h>MAX){var s=Math.min(MAX/w,MAX/h);w=Math.round(w*s);h=Math.round(h*s);}
+      var cv=document.createElement("canvas");cv.width=w;cv.height=h;
+      var cx=cv.getContext("2d");
+      cx.fillStyle="#fff";cx.fillRect(0,0,w,h);
+      cx.drawImage(img,0,0,w,h);
+      var out=cv.toDataURL("image/jpeg",0.92);
+      if(out.length>4600000)out=cv.toDataURL("image/jpeg",0.8);
+      cb(out,"image/jpeg",w+"\u00d7"+h);
+    }catch(err){cb(src,"image/jpeg","");}};
+  img.onerror=function(){cb(src,"image/jpeg","");};
+  img.src=src;}
+function readImage(file,cb){
+  var fr=new FileReader();
+  fr.onerror=function(){cb("","","");};
+  fr.onload=function(){readCanvas(String(fr.result),cb);};
+  fr.readAsDataURL(file);}
+
 function shrinkImage(file,cb){
   var fr=new FileReader();
   fr.onerror=function(){cb("","",("could not be read"));};
