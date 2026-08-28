@@ -205,7 +205,7 @@
   </div>
   <div class="top-right"><button id="themeBtn" title="Change colours" style="background:none;border:1px solid currentColor;
     color:inherit;border-radius:3px;font-family:inherit;font-size:11px;padding:2px 7px;cursor:pointer;opacity:.8">Theme</button>
-    <span style="opacity:.75">v17</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
+    <span style="opacity:.75">v18</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
 </header>
 
 <nav class="tabs" role="tablist">
@@ -933,6 +933,7 @@ function viewAmc(){
     +'<button class="btn ghost" data-import="amc">Import Excel</button>'
     +'<button class="btn ghost" data-export="amc">Export Excel</button>'
     +'<button class="btn ghost" data-print="1">PDF / print</button>'
+    +'<button class="btn ghost" data-delmonth="1">Delete this month</button>'
     +'<button class="btn" data-add="amc">Add service</button></div>';
   h+='<div class="card"><h2>AMC service schedule &mdash; '+esc(mLabel(m))+' <span class="count">'+d+' of '+rows.length+' completed</span></h2>'
     +'<div class="body flush"><div class="tbl-wrap"><table id="amcTbl" class="rsp"><thead><tr>'
@@ -2035,6 +2036,8 @@ function viewData(){
   h+='<div class="card"><h2>Backup</h2><div class="body"><div class="toolbar">'
     +'<button class="btn ghost" data-export="all">Export everything to Excel</button>'
     +'<button class="btn danger" data-reset="1">Reset to the uploaded August lists</button></div>'
+    +'<div class="toolbar" style="margin:10px 0 0"><button class="btn ghost" id="dupChk">Check for duplicates</button>'
+    +'<span class="spacer"></span></div>'
     +'<p class="hint">Data lives on this device only. Export to Excel regularly and keep a copy on the office drive.</p></div></div>';
 
   h+='<div class="card"><h2>WhatsApp send list <span class="count">'+((SETT.waList||[]).length)+'</span></h2>'
@@ -2112,6 +2115,76 @@ function checksHtml(id,sel){
     return '<label><input type="checkbox" value="'+t.id+'"'+((sel||[]).indexOf(t.id)>-1?" checked":"")+'> '+esc(t.name)+'</label>';}).join("")+'</div>';}
 function checked(id){
   return Array.prototype.map.call(document.querySelectorAll("#"+id+" input:checked"),function(i){return i.value;});}
+
+
+/* ---------- duplicate keys and the scanner ---------- */
+function dkey(s){return String(s||"").toLowerCase().replace(/[^a-z0-9]/g,"");}
+function amcKey(r){return (r.month||"")+"|"+dkey(r.amcNo)+"|"+dkey(r.serviceNo)
+  +"|"+dkey(r.site)+"|"+dkey(r.system);}
+function gmcKey(r){return dkey(r.gmcNo);}
+function conKey(r){return dkey(r.amcNo);}
+function amcSame(a,b){
+  return dkey(a.site)===dkey(b.site)&&dkey(a.status)===dkey(b.status)
+    &&(a.schedDate||"")===(b.schedDate||"")&&dkey(a.srNo)===dkey(b.srNo);}
+function groupDup(list,keyfn){
+  var m={},out=[];
+  list.forEach(function(r){var k=keyfn(r);if(!k||k==="|"||k==="||")return;(m[k]=m[k]||[]).push(r);});
+  for(var k in m)if(m[k].length>1)out.push({key:k,rows:m[k]});
+  return out;}
+function dupScan(){
+  return {amc:groupDup(state.amc,amcKey),
+    gmc:groupDup(state.gmc,gmcKey),
+    contracts:groupDup(state.contracts,conKey),
+    techs:groupDup(state.techs,function(t){return dkey(t.name);})};}
+function dupTotal(d){
+  var n=0;["amc","gmc","contracts","techs"].forEach(function(k){
+    d[k].forEach(function(g){n+=g.rows.length-1;});});
+  return n;}
+function dupModal(){
+  var d=dupScan(),n=dupTotal(d);
+  var body="";
+  if(!n)body='<div class="empty"><b>No duplicates found</b>Every AMC line, GMC job, contract and technician is unique.</div>';
+  else{
+    body='<div class="info">Found <b>'+n+'</b> extra copy(ies). The first of each group is kept and the rest removed.</div>';
+    var sect=function(title,groups,lbl){
+      if(!groups.length)return "";
+      var h='<div class="field"><label>'+title+' \u2014 '+groups.length+' group(s)</label>'
+        +'<div class="tbl-wrap"><table class="rsp"><tbody>';
+      groups.slice(0,25).forEach(function(g){
+        h+='<tr><td>'+esc(lbl(g.rows[0]))+' <span class="count">'+g.rows.length+' copies</span></td></tr>';});
+      if(groups.length>25)h+='<tr><td class="hint">and '+(groups.length-25)+' more\u2026</td></tr>';
+      return h+'</tbody></table></div></div>';};
+    body+=sect("AMC lines",d.amc,function(r){return mLabel(r.month)+" \u00b7 "+r.amcNo+" \u00b7 "+r.site+" \u00b7 "+r.serviceNo;})
+      +sect("GMC jobs",d.gmc,function(r){return r.gmcNo+" \u00b7 "+r.client;})
+      +sect("Contracts",d.contracts,function(r){return r.amcNo+" \u00b7 "+r.site;})
+      +sect("Technicians",d.techs,function(r){return r.name;});
+    body+='<p class="hint">Take a full backup first if you are unsure. This cannot be undone.</p>';}
+  openModal("Check for duplicates",body,n?function(){
+    var kill={};
+    ["amc","gmc","contracts","techs"].forEach(function(k){
+      d[k].forEach(function(g){g.rows.slice(1).forEach(function(r){kill[k+":"+r.id]=1;});});});
+    ["amc","gmc","contracts","techs"].forEach(function(k){
+      state[k]=state[k].filter(function(r){return !kill[k+":"+r.id];});});
+    closeModal();commit(n+" duplicate(s) removed");
+  }:null,"",false,null,null);}
+
+/* ---------- delete a whole month of AMC lines ---------- */
+function monthDeleteModal(){
+  var m=state.curMonth,rows=amcOf(m);
+  if(!rows.length)return toast("No AMC lines stored for "+mLabel(m));
+  var done=rows.filter(function(r){return r.status==="Completed";}).length;
+  var body='<div class="info">This removes <b>'+rows.length+'</b> AMC line(s) for <b>'+mLabel(m)+'</b>'
+    +(done?', including <b>'+done+'</b> marked Completed':'')+'.</div>'
+    +'<p class="hint">Contracts, technicians, GMC jobs, on-call and documents are not touched \u2014 '
+    +'only the AMC lines for this one month. Other months stay as they are.</p>'
+    +'<div class="field"><label style="text-transform:none;letter-spacing:0;font-weight:400;font-size:13.5px">'
+    +'<input type="checkbox" id="dOk" style="width:auto;margin-right:6px">Yes, delete these '+rows.length+' line(s)</label></div>';
+  openModal("Delete "+mLabel(m)+" AMC lines",body,function(){
+    var c=document.getElementById("dOk");
+    if(!c||!c.checked)return mErr("Tick the box to confirm.");
+    state.amc=state.amc.filter(function(a){return a.month!==m;});
+    closeModal();commit(rows.length+" line(s) deleted");
+  },"",false,null,null);}
 
 function amcModal(a){
   var isNew=!a;
@@ -2508,9 +2581,16 @@ function amcBatchModal(entries){
       +'</select></td><td class="num">'+e.recs.length+'</td>'
       +'<td class="num" id="ex'+ix+'">'+(amcOf(e.month).length||"\u2014")+'</td></tr>';});
   body+='</tbody></table></div>'
-    +'<div class="field" style="margin-top:12px"><label style="text-transform:none;letter-spacing:0;font-weight:400;font-size:13.5px">'
-    +'<input type="checkbox" id="fRep" checked style="width:auto;margin-right:6px">'
-    +'Replace any AMC lines already stored for these months</label></div>'
+    +'<div class="field" style="margin-top:12px"><label>When a line is already stored</label><select id="fDup">'
+    +'<option value="skip">Skip it \u2014 keep what I already have</option>'
+    +'<option value="update">Update it from the sheet</option>'
+    +'<option value="replace">Clear these months first, then load everything</option>'
+    +'<option value="add">Add it anyway (may create duplicates)</option></select>'
+    +'<p class="hint" style="margin-top:5px">A line counts as already stored when the month, '
+    +'AMC number, service number, site and system all match \u2014 so the several sites '
+    +'under one AMC number (Kanoo Tower, Kanoo Jubail, TSSP Plant, TSSP Bending and so on) '
+    +'stay separate. <b>Skip</b> is the safe choice \u2014 '
+    +'import the same sheet twice and nothing is duplicated.</p></div>'
     +'<div class="field"><label>Where the sheet does not say</label><select id="fSt">'
     +'<option value="Completed">Treat past months as Completed</option>'
     +'<option value="Open">Leave everything Open</option></select>'
@@ -2527,7 +2607,9 @@ function amcBatchModal(entries){
       +'<input type="checkbox" id="fDuty" style="width:auto;margin-right:6px">Also build duty records from the service '
       +'date and technicians, so the duty board shows the history</label></div>':'');
   openModal("Import monthly AMC lists",body,function(){
-    var rep=document.getElementById("fRep").checked, dflt=val("fSt");
+    var dflt=val("fSt");
+    var dupMode=val("fDup")||"skip", skipped=0, updated=0;
+    var rep=(dupMode==="replace");
     var addTEl=document.getElementById("fNewT"), dutyEl=document.getElementById("fDuty");
     var addT=addTEl?addTEl.checked:false, mkDuty=dutyEl?dutyEl.checked:false;
     Array.prototype.forEach.call(document.querySelectorAll("[data-mrow]"),function(s){
@@ -2535,6 +2617,7 @@ function amcBatchModal(entries){
     var months={},lines=0;
     entries.forEach(function(e){months[e.month]=1;});
     if(rep)state.amc=state.amc.filter(function(a){return !months[a.month];});
+    var have={};state.amc.forEach(function(a){have[amcKey(a)]=a;});
     entries.forEach(function(e){
       e.recs.forEach(function(r){
         var c=null;state.contracts.forEach(function(x){if(x.amcNo===r.amcNo)c=x;});
@@ -2552,18 +2635,31 @@ function amcBatchModal(entries){
         var repSt=(st==="Report Pending Sign")?"Submitted"
           :(r.srNo?((st==="Completed")?"Signed / JCC received":"Submitted"):"Not submitted");
         var cs=(st==="Under Renewal")?"Under Renewal":((st==="On Hold")?"On Hold":r.contractStatus);
-        state.amc.push({id:uid(),month:e.month,contractId:c.id,amcNo:r.amcNo,site:r.site,
+        var fresh={id:uid(),month:e.month,contractId:c.id,amcNo:r.amcNo,site:r.site,
           system:r.system||c.system,serviceNo:r.serviceNo,client:r.site,location:c.location||"Dammam",
           freq:r.freq||c.freq,contractStatus:cs,status:st,srNo:r.srNo||"",
           schedDate:r.servDate||"",doneDate:(st==="Completed")?(r.servDate||""):"",
-          report:repSt,qtn:"Not required",techs:ids,techText:leftover.join(", "),notes:r.remark});
+          report:repSt,qtn:"Not required",techs:ids,techText:leftover.join(", "),notes:r.remark};
+        var k=amcKey(fresh),old=have[k];
+        if(old&&dupMode!=="add"){
+          if(dupMode==="update"&&!amcSame(old,fresh)){
+            fresh.id=old.id;
+            for(var q=0;q<state.amc.length;q++)if(state.amc[q].id===old.id)state.amc[q]=fresh;
+            have[k]=fresh;updated++;}
+          else skipped++;
+          return;}
+        state.amc.push(fresh);have[k]=fresh;
         if(mkDuty&&r.servDate&&ids.length)
           state.duties.push({id:uid(),date:r.servDate,ref:"",siteText:r.amcNo+" \u00b7 "+r.site,
             activity:"AMC",location:c.location||"Dammam",techIds:ids,remarks:r.srNo?("SR "+r.srNo):""});
         lines++;});});
     var keys=Object.keys(months).sort();
     state.curMonth=keys[keys.length-1];
-    closeModal();commit(lines+" line(s) loaded across "+keys.length+" month(s)");
+    closeModal();
+    var msg=lines+" line(s) loaded across "+keys.length+" month(s)";
+    if(updated)msg+=", "+updated+" updated";
+    if(skipped)msg+=", "+skipped+" already stored";
+    commit(msg);
   },"",true);
   var sf=document.getElementById("stFound");
   if(sf)sf.textContent=withSt?(withSt+" row(s) in these files already state a status."):"None of these rows state a status.";
@@ -2931,6 +3027,8 @@ function wire(){
     if(b.dataset.waedit===""){waModal(0);return;}
     if(b.id==="waAdd"){waModal(-1);return;}
     if(b.id==="logClear"){state.log=[];save();render();toast("List cleared");return;}
+    if(b.id==="dupChk"){dupModal();return;}
+    if(b.dataset.delmonth){monthDeleteModal();return;}
     if(b.dataset.gsheet){gsModal(b.dataset.gsheet);return;}
     if(b.dataset.add==="duty"){dutyModal(null,iso(today()));return;}
     if(b.dataset.add==="tech"){techModal(null);return;}
