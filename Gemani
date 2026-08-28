@@ -1,0 +1,48 @@
+<!-- GSSC Master Live Cloud Auto-Sync Script -->
+<script>
+const GSSC_SHEET_ID = "1fCFdvQZZ_vB5T1CThI96ZwbIEmOu0QiUVYNCdPWozCQ";
+
+// 1. Fetch live data for any sheet tab
+async function fetchGsscSheetData(tabName) {
+    try {
+        const url = `https://docs.google.com/spreadsheets/d/${GSSC_SHEET_ID}/gviz/tq?tqx=out:json&sheet=${encodeURIComponent(tabName)}`;
+        const response = await fetch(url);
+        const text = await response.text();
+        const json = JSON.parse(text.substring(47).slice(0, -2));
+        
+        return json.table.rows.map(row => 
+            row.c.map(cell => (cell ? cell.v : ""))
+        );
+    } catch (err) {
+        console.warn(`Could not sync ${tabName}, using local cache:`, err);
+        return null;
+    }
+}
+
+// 2. Automatically sync all tabs on page load
+async function autoSyncGsscApp() {
+    console.log("⚡ Auto-syncing GSSC live cloud data...");
+    
+    // Fetch live AMC schedule, GMC jobs, and On-Call logs
+    const amcData = await fetchGsscSheetData("AMC_Monthly_Schedule");
+    const gmcData = await fetchGsscSheetData("GMC_Job_Status");
+    const onCallData = await fetchGsscSheetData("On_Call_Emergency_Logs");
+
+    if (amcData || gmcData || onCallData) {
+        // Save to browser local storage so it works offline too
+        if (amcData) localStorage.setItem("gssc_amc_live", JSON.stringify(amcData));
+        if (gmcData) localStorage.setItem("gssc_gmc_live", JSON.stringify(gmcData));
+        if (onCallData) localStorage.setItem("gssc_oncall_live", JSON.stringify(onCallData));
+        
+        console.log("✅ GSSC App updated with live Google Sheets records!");
+        
+        // If your app has a render/refresh function, call it here:
+        if (typeof renderAllTables === "function") renderAllTables();
+        if (typeof loadDashboard === "function") loadDashboard();
+    }
+}
+
+// Trigger auto-sync whenever the app opens
+window.addEventListener("DOMContentLoaded", autoSyncGsscApp);
+</script>
+
