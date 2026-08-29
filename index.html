@@ -230,7 +230,7 @@
   </div>
   <div class="top-right"><button id="themeBtn" title="Change colours" style="background:none;border:1px solid currentColor;
     color:inherit;border-radius:3px;font-family:inherit;font-size:11px;padding:2px 7px;cursor:pointer;opacity:.8">Theme</button>
-    <span style="opacity:.75">v21</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
+    <span style="opacity:.75">v22</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
 </header>
 
 <nav class="tabs" role="tablist">
@@ -502,8 +502,13 @@ function agentReadFile(file){
         if(f[k]&&String(f[k]).trim())filled++;});
       if(f.technicians&&f.technicians.length)filled++;
       if(!filled){
+        var seen=f.seen?String(f.seen):"";
         CHAT.push({r:"err",t:"Nothing could be read from that picture"
-          +(dim?" ("+dim+")":"")+".\n\nWhat usually fixes it:\n"
+          +(dim?" ("+dim+")":"")+"."
+          +(seen?"\n\nWhat Claude says it can see: \u201c"+seen+"\u201d":
+            "\n\nClaude did not say what it could see \u2014 if your Apps Script is not on the latest version, "
+            +"redeploy it with Deploy \u203a Manage deployments \u203a New version.")
+          +"\n\nWhat usually fixes it:\n"
           +"\u2022 Fill the frame with the page \u2014 no desk, no hands\n"
           +"\u2022 Hold the phone flat above it, not at an angle\n"
           +"\u2022 Good light, no shadow across the paper\n"

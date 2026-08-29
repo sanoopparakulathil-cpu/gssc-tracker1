@@ -137,7 +137,10 @@ function claudeRead_(body) {
     + "The photo may be angled, shadowed or partly blurred - read whatever you can. "
     + "Partial readings are useful: fill in every field you can make out, even if others are unreadable. "
     + "Reply with ONE JSON object and nothing else - no explanation, no markdown fences. "
-    + "Use these keys: srNo, jccNo, jccDate, date, site, amcNo, gmcNo, system, technicians, status, remarks. "
+    + "Use these keys: seen, srNo, jccNo, jccDate, date, site, amcNo, gmcNo, system, technicians, status, remarks. "
+    + "seen is a short plain-English description of what the picture actually shows - for example "
+    + "'a printed GSSC service report, clear' or 'a dark blurred photo, no text legible' or "
+    + "'a screenshot of a phone app'. Always fill in seen, even when every other field is blank. "
     + "srNo is the service report number, often written SR No or SF/ followed by digits. "
     + "jccNo is the Job Completion Certificate number, often written JCC No, JCC, or Job Completion Certificate. "
     + "jccDate is the date on that certificate, if a separate one is shown. "
@@ -151,14 +154,29 @@ function claudeRead_(body) {
     { type: "image", source: { type: "base64", media_type: body.mime || "image/jpeg", data: body.data } },
     { type: "text", text: "Read this service report and return the JSON object. Fill in every field you can make out." }
   ];
+  var kb = Math.round(String(body.data || "").length / 1365);
   var r = claudeCall_([{ role: "user", content: content }], system, 800);
-  if (!r.ok) return json_(r);
+  if (!r.ok) { r.sentKb = kb; return json_(r); }
   var clean = String(r.text || "").replace(/```json/g, "").replace(/```/g, "").trim();
   var fields = null;
   try { fields = JSON.parse(clean); } catch (err) {
-    return json_({ ok: false, error: "Claude could not read that picture clearly. Try a straighter, brighter photo.", raw: clean.slice(0, 200) });
+    return json_({ ok: false, error: "Claude replied with something that was not a set of fields.",
+      raw: clean.slice(0, 300), sentKb: kb, mime: body.mime || "" });
   }
-  return json_({ ok: true, fields: fields, usage: r.usage });
+  return json_({ ok: true, fields: fields, usage: r.usage, sentKb: kb,
+    mime: body.mime || "", raw: clean.slice(0, 300) });
+}
+
+/* diagnostic: ask Claude to say what it can actually see in the picture */
+function claudeLook_(body) {
+  var content = [
+    { type: "image", source: { type: "base64", media_type: body.mime || "image/jpeg", data: body.data } },
+    { type: "text", text: "Describe what you see in this image in two or three sentences. "
+      + "Is it a document? Is any text legible? If you can read any text at all, quote a few words of it." }
+  ];
+  var r = claudeCall_([{ role: "user", content: content }], "", 400);
+  r.sentKb = Math.round(String(body.data || "").length / 1365);
+  return json_(r);
 }
 
 /* the app writes the shared list back */
@@ -179,6 +197,9 @@ function doPost(e) {
     }
     if (body.action === "read") {
       return claudeRead_(body);
+    }
+    if (body.action === "look") {
+      return claudeLook_(body);
     }
     if (!body.data) {
       return json_({ ok: false, error: "no data sent" });
