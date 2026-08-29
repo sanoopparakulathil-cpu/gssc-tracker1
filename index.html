@@ -230,7 +230,7 @@
   </div>
   <div class="top-right"><button id="themeBtn" title="Change colours" style="background:none;border:1px solid currentColor;
     color:inherit;border-radius:3px;font-family:inherit;font-size:11px;padding:2px 7px;cursor:pointer;opacity:.8">Theme</button>
-    <span style="opacity:.75">v22</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
+    <span style="opacity:.75">v23</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
 </header>
 
 <nav class="tabs" role="tablist">
@@ -475,6 +475,39 @@ function agentContext(q){
     contracts:state.contracts.map(function(c){return {amcNo:c.amcNo,site:c.site,system:c.system,
       freq:c.freq,status:c.contractStatus};})};
   return JSON.stringify(ctx);}
+
+var WANT_SCRIPT="2026-08-29-c";
+function scriptCheck(){
+  if(!agentReady())return toast("Link this device first");
+  toast("Checking the script\u2026");
+  agentPost({action:"ping"},function(o){
+    var body;
+    if(!o.ok&&!o.version){
+      body='<div class="info" style="background:#FCE9E9;border-color:#E9B7B7">'
+        +'<b>The deployed script is out of date.</b><br>It does not answer the version check, '
+        +'so it is running an older copy of the code.</div>'
+        +'<p>To fix it:</p><ol style="padding-left:18px;line-height:1.7">'
+        +'<li>Open <b>script.google.com</b> and open your project</li>'
+        +'<li>Select all the code and delete it</li>'
+        +'<li>Paste in the newest <b>gssc-sync.gs</b></li>'
+        +'<li>Put your secret back on the <b>KEY</b> line and your sk-ant- key on the <b>CLAUDE_KEY</b> line</li>'
+        +'<li>Save, then <b>Deploy \u203a Manage deployments \u203a pencil \u203a New version \u203a Deploy</b></li></ol>'
+        +'<p class="hint">Step 5 is the one people miss. Saving alone does not publish the new code.</p>';
+    }else{
+      var same=o.version===WANT_SCRIPT;
+      body='<div class="info"'+(same?'':' style="background:#FFF3D6;border-color:#F0DCB4"')+'>'
+        +'<b>Script version:</b> '+esc(o.version||"unknown")+'<br>'
+        +'<b>App expects:</b> '+esc(WANT_SCRIPT)+'<br>'
+        +(same?'These match \u2014 the script is up to date.'
+              :'These do not match \u2014 paste in the newest script and redeploy with <b>New version</b>.')
+        +'</div>'
+        +'<div class="field"><label>Claude key</label><div>'
+        +(o.claudeKeySet?'Set \u2014 the agent can run.'
+                       :'<b>Not set.</b> Open the script and paste your sk-ant- key into CLAUDE_KEY.')
+        +'</div></div>'
+        +'<div class="field"><label>Model</label><div>'+esc(o.model||"\u2014")+'</div></div>';
+    }
+    openModal("Script check",body,null,"",false,null,null);});}
 
 function agentAsk(q){
   if(AGENTBUSY)return;
@@ -2300,6 +2333,7 @@ function viewData(){
     +'<button class="btn ghost" data-export="all">Export everything to Excel</button>'
     +'<button class="btn danger" data-reset="1">Reset to the uploaded August lists</button></div>'
     +'<div class="toolbar" style="margin:10px 0 0"><button class="btn ghost" id="dupChk">Check for duplicates</button>'
+    +'<button class="btn ghost" id="scriptChk">Check script version</button>'
     +'<span class="spacer"></span></div>'
     +'<p class="hint">Data lives on this device only. Export to Excel regularly and keep a copy on the office drive.</p></div></div>';
 
@@ -3401,6 +3435,7 @@ function wire(){
     if(b.id==="waAdd"){waModal(-1);return;}
     if(b.id==="logClear"){state.log=[];save();render();toast("List cleared");return;}
     if(b.id==="dupChk"){dupModal();return;}
+    if(b.id==="scriptChk"){scriptCheck();return;}
     if(b.id==="chatGo"){
       var q=(document.getElementById("chatIn")||{}).value||"";
       if(q.trim())agentAsk(q.trim());return;}

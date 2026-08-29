@@ -26,6 +26,10 @@ var KEY = "CHANGE-THIS-TO-A-LONG-SECRET-abc123xyz789";
 var CLAUDE_KEY = "";
 var CLAUDE_MODEL = "claude-sonnet-5";
 
+/* Bump this whenever you paste in a new copy of the script. The app can read it
+   back, so you can tell at a glance whether your deployment is up to date. */
+var SCRIPT_VERSION = "2026-08-29-c";
+
 var FILE_NAME = "gssc-tracker-data.json";
 
 
@@ -191,6 +195,14 @@ function doPost(e) {
     }
     if (body.action === "file") {
       return saveFile_(body);
+    }
+    if (body.action === "ping") {
+      return json_({
+        ok: true,
+        version: SCRIPT_VERSION,
+        claudeKeySet: !!CLAUDE_KEY,
+        model: CLAUDE_MODEL
+      });
     }
     if (body.action === "ask") {
       return claudeAsk_(body);
