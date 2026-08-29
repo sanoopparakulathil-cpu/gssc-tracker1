@@ -230,7 +230,7 @@
   </div>
   <div class="top-right"><button id="themeBtn" title="Change colours" style="background:none;border:1px solid currentColor;
     color:inherit;border-radius:3px;font-family:inherit;font-size:11px;padding:2px 7px;cursor:pointer;opacity:.8">Theme</button>
-    <span style="opacity:.75">v23</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
+    <span style="opacity:.75">v24</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
 </header>
 
 <nav class="tabs" role="tablist">
@@ -482,10 +482,21 @@ function scriptCheck(){
   toast("Checking the script\u2026");
   agentPost({action:"ping"},function(o){
     var body;
-    if(!o.ok&&!o.version){
+    if(!o.ok&&!o.version&&/wrong key/i.test(String(o.error||""))){
       body='<div class="info" style="background:#FCE9E9;border-color:#E9B7B7">'
-        +'<b>The deployed script is out of date.</b><br>It does not answer the version check, '
-        +'so it is running an older copy of the code.</div>'
+        +'<b>The secret does not match.</b><br>The script answered, so it is deployed and reachable \u2014 '
+        +'but the secret saved on this device is not the same as the one on the <b>KEY</b> line of the script.</div>'
+        +'<p>To fix it:</p><ol style="padding-left:18px;line-height:1.7">'
+        +'<li>Open <b>script.google.com</b> and look at the <b>KEY</b> line near the top</li>'
+        +'<li>Copy exactly what is between the quotes</li>'
+        +'<li>Come back here, press <b>Change link</b>, and paste it into the secret box</li>'
+        +'<li>Do the same on your other device</li></ol>'
+        +'<p class="hint">Capital letters matter, and a stray space will break it.</p>';
+    }else if(!o.ok&&!o.version){
+      body='<div class="info" style="background:#FCE9E9;border-color:#E9B7B7">'
+        +'<b>The deployed script is out of date.</b><br>It answered, but not with a version number, '
+        +'so it is running an older copy of the code.'
+        +(o.error?'<br><br>It said: \u201c'+esc(o.error)+'\u201d':'')+'</div>'
         +'<p>To fix it:</p><ol style="padding-left:18px;line-height:1.7">'
         +'<li>Open <b>script.google.com</b> and open your project</li>'
         +'<li>Select all the code and delete it</li>'
