@@ -28,7 +28,7 @@ var CLAUDE_MODEL = "claude-sonnet-5";
 
 /* Bump this whenever you paste in a new copy of the script. The app can read it
    back, so you can tell at a glance whether your deployment is up to date. */
-var SCRIPT_VERSION = "2026-10-24-verify";
+var SCRIPT_VERSION = "2026-10-24-checklist";
 
 var FILE_NAME = "gssc-tracker-data.json";
 
@@ -209,6 +209,9 @@ function techLoad_() {
   if (!d || typeof d !== "object") d = {};
   if (!d.pins) d.pins = {};
   if (!d.events) d.events = [];
+  if (!d.tpls) d.tpls = [];
+  if (!d.forms) d.forms = [];
+  if (!d.sites) d.sites = {};
   if (!d.tools || !d.tools.length) {
     d.tools = DEFAULT_TOOLS.map(function (n) { return { id: newId_(), name: n }; });
   }
@@ -220,6 +223,7 @@ function techSave_(h) {
   var cut = Date.now() - 120 * 864e5;
   h.d.events = h.d.events.filter(function (e) { return e.ts >= cut; });
   if (h.d.events.length > 4000) h.d.events = h.d.events.slice(-4000);
+  if (h.d.forms.length > 3000) h.d.forms = h.d.forms.slice(-3000);
   h.f.setContent(JSON.stringify(h.d));
 }
 
@@ -413,7 +417,94 @@ function techState_(tech, h, main) {
     .slice(-60).reverse();
   var L = listsFor_(main, h);
   return { ok: true, tech: tech.name, today: dayStr_(0), jobs: jobs, tools: toolState_(h.d), history: mine,
-           sites: siteNames_(main), amc: L.amc, gmc: L.gmc, team: teamDuty_(main) };
+           sites: siteNames_(main), amc: L.amc, gmc: L.gmc, team: teamDuty_(main),
+           tpls: h.d.tpls, siteData: h.d.sites,
+           forms: h.d.forms.filter(function (f) { return f.techId === tech.id; }).slice(-40).reverse().map(formSum_) };
+}
+
+/* ---------- checklists filled on the phone ---------- */
+function formSum_(f) {
+  return { id: f.id, site: f.site, tplId: f.tplId, tplName: f.tplName, date: f.date, svc: f.svc || "", status: f.status,
+           tech: f.tech, ts: f.mod, done: f.done || 0, total: f.total || 0 };
+}
+function tplItems_(t) {
+  var n = 0; (t.sections || []).forEach(function (sc) { n += (sc.items || []).length; }); return n;
+}
+function cleanStr_(v, n) { return String(v == null ? "" : v).slice(0, n); }
+function chkSave_(tech, h, form, isAdmin) {
+  form = form || {};
+  var id = cleanStr_(form.id, 40);
+  if (!/^[A-Za-z0-9_-]{4,40}$/.test(id)) return { error: "Bad checklist id." };
+  var tpl = null;
+  h.d.tpls.forEach(function (t) { if (t.id === form.tplId) tpl = t; });
+  if (!tpl) return { error: "That checklist is no longer available. Refresh the app." };
+  var site = cleanStr_(form.site, 120).trim();
+  if (!site) return { error: "Choose the site." };
+  var date = cleanStr_(form.date, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > dayStr_(1)) return { error: "Check the inspection date." };
+  var status = form.status === "final" ? "final" : "draft";
+  var hdr = {};
+  Object.keys(form.hdr || {}).slice(0, 20).forEach(function (k) { hdr[cleanStr_(k, 24)] = cleanStr_(form.hdr[k], 120); });
+  var ans = {}, done = 0, total = tplItems_(tpl);
+  (tpl.sections || []).forEach(function (sc, si) {
+    (sc.items || []).forEach(function (it, ii) {
+      var k = si + "_" + ii, a = (form.ans || {})[k];
+      if (a && (a.v === "y" || a.v === "n" || a.v === "na" || a.c)) {
+        var v = (a.v === "y" || a.v === "n" || a.v === "na") ? a.v : "";
+        ans[k] = { v: v, c: cleanStr_(a.c, 600) };
+        if (v) done++;
+      }
+    });
+  });
+  if (status === "final" && done < total) {
+    return { error: "Answer every item (Yes, No or N/A) before submitting. " + (total - done) + " left." };
+  }
+  var finds = (form.finds || []).slice(0, 30).map(function (r) {
+    return { f: cleanStr_(r.f, 300), l: cleanStr_(r.l, 120), p: cleanStr_(r.p, 12), a: cleanStr_(r.a, 300) };
+  }).filter(function (r) { return r.f || r.l || r.a; });
+  var sign = { tech: cleanStr_((form.sign || {}).tech, 80), client: cleanStr_((form.sign || {}).client, 80) };
+  var cur = null, idx = -1;
+  h.d.forms.forEach(function (f, i) { if (f.id === id) { cur = f; idx = i; } });
+  if (cur) {
+    if (!isAdmin && cur.techId !== tech.id) return { error: "This checklist belongs to another technician." };
+    if (!isAdmin && cur.status === "final") return { error: "This checklist is already submitted. Ask your supervisor to reopen it." };
+  }
+  var rec = { id: id, techId: cur ? cur.techId : tech.id, tech: cur ? cur.tech : tech.name, tplId: tpl.id, tplName: tpl.name,
+              site: site, date: date, svc: cleanStr_(form.svc, 20), status: status, hdr: hdr, ans: ans, finds: finds, sign: sign,
+              done: done, total: total, mod: Date.now(), created: cur ? cur.created : Date.now() };
+  if (idx > -1) h.d.forms[idx] = rec; else h.d.forms.push(rec);
+  // what a technician writes about the system (panel make, pump model) is kept for the site and prefills next time
+  (tpl.hdr || []).forEach(function (hf) {
+    if (hf.rem && hdr[hf.k]) {
+      if (!h.d.sites[site]) h.d.sites[site] = {};
+      h.d.sites[site][hf.k] = hdr[hf.k];
+    }
+  });
+  techSave_(h);
+  return { ok: true, form: rec };
+}
+function tplClean_(t) {
+  if (!t || typeof t !== "object") return null;
+  var id = /^[A-Za-z0-9_-]{3,40}$/.test(t.id || "") ? t.id : "c" + newId_();
+  var secs = [];
+  (t.sections || []).slice(0, 40).forEach(function (sc) {
+    var items = [];
+    (sc.items || []).slice(0, 120).forEach(function (it) {
+      var tx = cleanStr_(it.t, 600).trim();
+      if (tx) items.push({ n: cleanStr_(it.n, 8), t: tx, ref: cleanStr_(it.ref, 60) });
+    });
+    if (items.length) secs.push({ t: cleanStr_(sc.t, 200), items: items });
+  });
+  if (!secs.length) return null;
+  var hdr = (t.hdr || []).slice(0, 14).map(function (x) {
+    var k = /^[a-z0-9_]{1,24}$/.test(x.k || "") ? x.k : "x_" + newId_();
+    var ty = (x.t === "date" || x.t === "svc" || x.t === "auto") ? x.t : "text";
+    return { k: k, l: cleanStr_(x.l, 40), t: ty, rem: !!x.rem };
+  });
+  var sites = (t.sites || []).slice(0, 80).map(function (x) { return cleanStr_(x, 120); }).filter(function (x) { return x; });
+  return { id: id, name: cleanStr_(t.name || t.title, 80), short: cleanStr_(t.short || t.name, 16), title: cleanStr_(t.title || t.name, 120),
+           sub: (t.sub || []).slice(0, 4).map(function (x) { return cleanStr_(x, 160); }), refCol: cleanStr_(t.refCol || "REFERENCE", 30),
+           hdr: hdr, sections: secs, foot: cleanStr_(t.foot, 500), sites: sites, std: !!t.std };
 }
 
 function siteNames_(main) {
@@ -436,6 +527,16 @@ function techAct_(body) {
   if (au.error) return json_({ ok: false, error: au.error });
   var tech = au.tech;
   if (act === "t_state") return json_(techState_(tech, h, main));
+  if (act === "t_chk_get") {
+    var gf = null;
+    h.d.forms.forEach(function (f) { if (f.id === body.id && f.techId === tech.id) gf = f; });
+    return gf ? json_({ ok: true, form: gf }) : json_({ ok: false, error: "Checklist not found." });
+  }
+  if (act === "t_chk_save") {
+    var cr = chkSave_(tech, h, (body.ev || {}).form, false);
+    if (cr.error) return json_({ ok: false, error: cr.error });
+    return json_(techState_(tech, h, main));
+  }
 
   var ev = body.ev || {};
   var id = String(ev.id || "");
@@ -530,6 +631,45 @@ function adminAct_(body) {
     var evs = h.d.events.filter(function (e) { return e.ts >= cut; });
     return json_({ ok: true, version: SCRIPT_VERSION, now: Date.now(), events: evs, tools: toolState_(h.d),
       pins: (main.techs || []).map(function (t) { return { id: t.id, name: t.name, active: t.active !== false, pinSet: !!h.d.pins[t.id] }; }) });
+  }
+  if (act === "a_tpls") {
+    return json_({ ok: true, tpls: h.d.tpls });
+  }
+  if (act === "a_tpl_save") {
+    var tc = tplClean_(body.tpl);
+    if (!tc) return json_({ ok: false, error: "The checklist has no items." });
+    var ti = -1;
+    h.d.tpls.forEach(function (x, i) { if (x.id === tc.id) ti = i; });
+    if (ti > -1) h.d.tpls[ti] = tc; else h.d.tpls.push(tc);
+    if (h.d.tpls.length > 60) return json_({ ok: false, error: "Too many checklists (60 maximum)." });
+    techSave_(h);
+    return json_({ ok: true, tpls: h.d.tpls });
+  }
+  if (act === "a_tpl_del") {
+    h.d.tpls = h.d.tpls.filter(function (x) { return x.id !== body.id; });
+    techSave_(h);
+    return json_({ ok: true, tpls: h.d.tpls });
+  }
+  if (act === "a_forms") {
+    return json_({ ok: true, forms: h.d.forms.slice(-400).reverse().map(formSum_), tpls: h.d.tpls, sites: h.d.sites });
+  }
+  if (act === "a_form_get") {
+    var af = null;
+    h.d.forms.forEach(function (f) { if (f.id === body.id) af = f; });
+    return af ? json_({ ok: true, form: af }) : json_({ ok: false, error: "Checklist not found." });
+  }
+  if (act === "a_form_reopen") {
+    var rf = null;
+    h.d.forms.forEach(function (f) { if (f.id === body.id) rf = f; });
+    if (!rf) return json_({ ok: false, error: "Checklist not found." });
+    rf.status = "draft"; rf.mod = Date.now();
+    techSave_(h);
+    return json_({ ok: true });
+  }
+  if (act === "a_form_del") {
+    h.d.forms = h.d.forms.filter(function (f) { return f.id !== body.id; });
+    techSave_(h);
+    return json_({ ok: true });
   }
   if (act === "a_setpin") {
     var pin = String(body.pin || "");

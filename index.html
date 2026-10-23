@@ -752,7 +752,7 @@ function syncModal(){
   if(d)d.onclick=function(){SYNC.url="";SYNC.key="";SYNC.last=0;syncCfgSave();closeModal();commit("Sync switched off");};}
 
 /* ================= technician access (admin side) ================= */
-var TECHD={events:[],tools:[],pins:[],now:0,err:"",loaded:0,busy:false};
+var TECHD={events:[],tools:[],pins:[],tpls:[],forms:[],now:0,err:"",loaded:0,busy:false};
 function techApplied(){try{return JSON.parse(localStorage.getItem("gssc-tech-applied")||"[]");}catch(e){return [];}}
 function techAppliedSave(a){try{localStorage.setItem("gssc-tech-applied",JSON.stringify(a.slice(-800)));}catch(e){}}
 function techPost(body){
@@ -778,6 +778,7 @@ function techFetch(loud){
     TECHD.now=r.now||Date.now();TECHD.loaded=Date.now();
     var n=techApply();
     techBadge();
+    techPost({action:"a_forms"}).then(function(x){if(x&&x.ok){TECHD.forms=x.forms||[];TECHD.tpls=x.tpls||[];if(tab==="tech")render();}}).catch(function(){});
     if(tab==="tech")render();
     if(loud&&!n)toast("Technician updates are up to date");
     return true;
@@ -884,6 +885,26 @@ function viewTech(){
         +'<button class="link" data-vno="'+esc(k)+'">Return</button></td></tr>';});
     h+='</tbody></table></div></div></div>';}
 
+  // checklists
+  h+='<div class="card"><h2>Checklists <span class="count">'+TECHD.tpls.length+'</span></h2>';
+  if(!TECHD.tpls.length)h+='<div class="empty"><b>No checklists installed</b>Press Install standard checklists. Technicians then fill them on their phones.</div>';
+  else{
+    h+='<div class="body flush"><div class="tbl-wrap"><table class="rsp"><thead><tr><th>Checklist</th><th>For</th><th>Items</th><th></th></tr></thead><tbody>';
+    TECHD.tpls.forEach(function(t){
+      var n=0;t.sections.forEach(function(sc){n+=sc.items.length;});
+      h+='<tr><td data-l="Checklist"><b>'+esc(t.name)+'</b></td>'
+        +'<td data-l="For">'+((t.sites&&t.sites.length)?'<span class="pill">Special</span> '+esc(t.sites.join(", ")):'All sites')+'</td>'
+        +'<td data-l="Items" class="num">'+n+'</td>'
+        +'<td data-l=""><button class="link" data-cprint="'+esc(t.id)+'">Print blank</button> <button class="link" data-cdel="'+esc(t.id)+'">Delete</button></td></tr>';});
+    h+='</tbody></table></div></div>';}
+  h+='<div style="padding:10px 14px"><button class="btn" id="cInstall">Install standard checklists</button> <button class="btn ghost" id="cSpecial">Add special site checklist</button>'
+    +'<p class="hint">Standard: Fire Alarm, FM-200, Fire Pump. A special checklist is for one or more sites and appears only for them. You can upload a Word (.docx) file or paste the items.</p></div></div>';
+  // filled checklists
+  h+='<div class="card"><h2>Filled site checklists <span class="count">'+TECHD.forms.length+'</span></h2>';
+  if(!TECHD.forms.length)h+='<div class="empty"><b>Nothing filled yet</b>Checklists filled by technicians are saved here for any date.</div></div>';
+  else{
+    h+='<div class="body"><input type="search" id="cfQ" placeholder="Search site or technician" value="'+esc(CFQ)+'"></div><div class="body flush"><div class="tbl-wrap"><table class="rsp"><thead><tr><th>Date</th><th>Site</th><th>Checklist</th><th>Technician</th><th>Status</th><th></th></tr></thead><tbody id="cfBody">'+cfRows()+'</tbody></table></div></div></div>';}
+
   // tools
   h+='<div class="card"><h2>Tools <span class="count">'+TECHD.tools.length+'</span></h2><div class="body flush"><div class="tbl-wrap"><table class="rsp"><thead><tr>'
     +'<th>Tool</th><th>Status</th><th>Since</th><th>Site</th><th></th></tr></thead><tbody>';
@@ -950,6 +971,14 @@ function techWire(){
   var b=document.getElementById("tRef");if(b)b.onclick=function(){techFetch(true);};
   b=document.getElementById("tLink");if(b)b.onclick=function(){copyText(techLink());};
   b=document.getElementById("tToolEdit");if(b)b.onclick=toolEditModal;
+  b=document.getElementById("cInstall");if(b)b.onclick=installStd;
+  b=document.getElementById("cSpecial");if(b)b.onclick=specialModal;
+  q("[data-cprint]",function(x){x.onclick=function(){var t=TECHD.tpls.filter(function(y){return y.id===x.dataset.cprint;})[0];if(t)chkPrintOpen(t,null);};});
+  q("[data-cdel]",function(x){x.onclick=function(){
+    if(!confirm("Delete this checklist? Already filled checklists stay saved."))return;
+    techPost({action:"a_tpl_del",id:x.dataset.cdel}).then(function(r){if(r&&r.ok){TECHD.tpls=r.tpls;render();}else toast((r&&r.error)||"Failed");});};});
+  b=document.getElementById("cfQ");if(b)b.oninput=function(){CFQ=b.value;document.getElementById("cfBody").innerHTML=cfRows();techWireForms();};
+  techWireForms();
   var pl=techPending();
   var pick=function(k){return pl.filter(function(e){return e.rowKind+"|"+e.rowId===k;})[0];};
   q("[data-vok]",function(x){x.onclick=function(){var e=pick(x.dataset.vok);if(e)techVerifyModal(e,true);};});
@@ -963,6 +992,179 @@ function techWire(){
     if(!confirm("Remove this PIN? The technician will not be able to log in."))return;
     techPost({action:"a_clearpin",techId:x.dataset.tpinx}).then(function(r){
       if(r&&r.ok){toast("PIN removed");techFetch(false);}else toast((r&&r.error)||"Failed");});};});}
+
+function techWireForms(){
+  var v=document.getElementById("view");
+  Array.prototype.forEach.call(v.querySelectorAll("[data-fopen]"),function(x){x.onclick=function(){
+    techPost({action:"a_form_get",id:x.dataset.fopen}).then(function(r){
+      if(!r||!r.ok)return toast((r&&r.error)||"Failed");
+      var t=TECHD.tpls.filter(function(y){return y.id===r.form.tplId;})[0];
+      if(!t)return toast("The checklist template was deleted, so it cannot be shown.");
+      chkPrintOpen(t,r.form);});};});
+  Array.prototype.forEach.call(v.querySelectorAll("[data-freopen]"),function(x){x.onclick=function(){
+    if(!confirm("Reopen this checklist so the technician can edit it again?"))return;
+    techPost({action:"a_form_reopen",id:x.dataset.freopen}).then(function(r){if(r&&r.ok){toast("Reopened");techFetch(false);}else toast((r&&r.error)||"Failed");});};});
+  Array.prototype.forEach.call(v.querySelectorAll("[data-fdel]"),function(x){x.onclick=function(){
+    if(!confirm("Delete this filled checklist for good?"))return;
+    techPost({action:"a_form_del",id:x.dataset.fdel}).then(function(r){if(r&&r.ok){toast("Deleted");techFetch(false);}else toast((r&&r.error)||"Failed");});};});
+}
+var CFQ="";
+function cfRows(){
+  var q=CFQ.trim().toLowerCase();
+  return TECHD.forms.filter(function(f){return !q||(f.site+" "+f.tech+" "+f.tplName).toLowerCase().indexOf(q)>-1;}).slice(0,150).map(function(f){
+    return '<tr><td data-l="Date" class="num">'+esc(f.date)+'</td><td data-l="Site"><b>'+esc(f.site)+'</b></td><td data-l="Checklist">'+esc(f.tplName||"")+'</td>'
+      +'<td data-l="Technician">'+esc(f.tech)+'</td>'
+      +'<td data-l="Status"><span class="pill'+(f.status==="final"?' ok':'')+'">'+(f.status==="final"?"Submitted":"Draft")+'</span>'+(f.total?' <span class="hint">'+f.done+'/'+f.total+'</span>':'')+'</td>'
+      +'<td data-l=""><button class="link" data-fopen="'+esc(f.id)+'">View / print</button>'
+      +(f.status==="final"?' <button class="link" data-freopen="'+esc(f.id)+'">Reopen</button>':'')+' <button class="link" data-fdel="'+esc(f.id)+'">Delete</button></td></tr>';}).join("")
+    ||'<tr><td colspan="6" class="hint">No match.</td></tr>';}
+
+/* ---- checklist printing: tall rows, page numbers ---- */
+function chkPrintHtml(t,f){
+  var E=esc,A=(f&&f.ans)||{},hv=function(k){return f?(k==="date"?f.date:(k==="svc"?f.svc:((f.hdr||{})[k]||(k==="client"?f.site:"")))):"";};
+  var h='<!doctype html><html><head><meta charset="utf-8"><title>'+E(t.name)+(f?' - '+E(f.site)+' '+E(f.date):'')+'</title><style>'
+    +'@page{size:A4 landscape;margin:12mm 10mm 16mm;@bottom-center{content:"Page " counter(page) " of " counter(pages);font:10px Arial}}'
+    +'*{box-sizing:border-box}body{font:11px Arial,sans-serif;color:#111;margin:0}'
+    +'.top{background:#1F3864;color:#fff;padding:10px 14px}.top b{font-size:16px;display:block}.top span{font-size:11px}'
+    +'table{border-collapse:collapse;width:100%}td,th{border:1px solid #777;padding:5px 6px;vertical-align:top}'
+    +'th{background:#E9EEF7;font-size:10px;text-transform:uppercase}.hd td{width:25%}.hd td.l{background:#F3F5F9;font-weight:bold;width:15%}'
+    +'.sec td{background:#1F3864;color:#fff;font-weight:bold}.it td{height:'+(f?'9':'15')+'mm}.c{text-align:center;width:9mm;font-size:14px}'
+    +'.n{width:10mm;text-align:center}.r{width:32mm;font-size:9px}.cm{width:70mm}h3{margin:14px 0 4px;color:#1F3864;page-break-after:avoid}'
+    +'tr{page-break-inside:avoid}.fd td{height:11mm}.pb{page-break-before:always}.bar{position:fixed;top:6px;right:8px}@media print{.bar{display:none}}'
+    +'.no-print button{padding:8px 14px;font-size:14px}'
+    +'</style></head><body><div class="bar no-print"><button onclick="window.print()">Print / Save PDF</button></div>'
+    +'<div class="top"><b>'+E(t.title)+'</b><span>'+E((t.sub||[]).join(" — "))+'</span></div>'
+    +'<table class="hd" style="margin-top:6px">';
+  var hs=t.hdr||[];
+  for(var i=0;i<hs.length;i+=2){
+    h+='<tr>';
+    for(var j=i;j<i+2;j++){var x=hs[j];
+      if(!x){h+='<td class="l"></td><td></td>';continue;}
+      var v=hv(x.k);
+      if(x.t==="svc")v=(f?'':'')+(f?(v==="Monthly"?'☑ Monthly  ☐ Quarterly':(v==="Quarterly"?'☐ Monthly  ☑ Quarterly':'☐ Monthly  ☐ Quarterly')):'☐ Monthly   ☐ Quarterly');
+      else if(x.k==="by"&&!v&&f)v=f.tech;
+      h+='<td class="l">'+E(x.l)+':</td><td>'+E(v)+'</td>';}
+    h+='</tr>';}
+  h+='</table><h3>INSPECTION &amp; TESTING CHECKLIST</h3><table><thead><tr><th class="n">S.No</th><th>Inspection / test activity</th><th class="r">'+E(t.refCol||"Ref")+'</th><th class="c">Yes</th><th class="c">No</th><th class="c">N/A</th><th class="cm">Comments / readings</th></tr></thead><tbody>';
+  t.sections.forEach(function(sc,si){
+    h+='<tr class="sec"><td colspan="7">'+E(sc.t)+'</td></tr>';
+    sc.items.forEach(function(it,ii){
+      var a=A[si+"_"+ii]||{};
+      h+='<tr class="it"><td class="n">'+E(it.n)+'</td><td>'+E(it.t)+'</td><td class="r">'+E(it.ref)+'</td>'
+        +'<td class="c">'+(a.v==="y"?'☑':'☐')+'</td><td class="c">'+(a.v==="n"?'☑':'☐')+'</td><td class="c">'+(a.v==="na"?'☑':'☐')+'</td><td class="cm">'+E(a.c||"")+'</td></tr>';});});
+  h+='</tbody></table><h3>DEFICIENCIES &amp; FINDINGS LOG</h3><table><thead><tr><th class="n">S.No</th><th>Deficiency / finding</th><th>Location / device</th><th>Priority</th><th>Recommended action</th></tr></thead><tbody>';
+  var fr=(f&&f.finds)||[];
+  for(var k=0;k<Math.max(fr.length,f?0:10);k++){var r=fr[k]||{};
+    h+='<tr class="fd"><td class="n">'+(k+1)+'</td><td>'+E(r.f||"")+'</td><td>'+E(r.l||"")+'</td><td>'+E(r.p||"")+'</td><td>'+E(r.a||"")+'</td></tr>';}
+  if(f&&!fr.length)h+='<tr><td colspan="5">No deficiencies recorded.</td></tr>';
+  h+='</tbody></table><h3>DOCUMENTATION &amp; SIGN-OFF</h3><table><thead><tr><th>Role</th><th>Printed name</th><th>Signature</th><th>Date</th></tr></thead><tbody>'
+    +'<tr class="fd"><td>GSSC Supervisor / Technician</td><td>'+E(f?(f.sign||{}).tech||f.tech:"")+'</td><td></td><td>'+E(f?f.date:"")+'</td></tr>'
+    +'<tr class="fd"><td>Client Representative</td><td>'+E(f?(f.sign||{}).client||"":"")+'</td><td></td><td></td></tr></tbody></table>'
+    +'<p style="font-size:9px;color:#555">'+E(t.foot||"")+'</p>'
+    +(f?'<p style="font-size:9px;color:#555">Filled on phone by '+E(f.tech)+' · '+E(f.status==="final"?"Submitted":"Draft")+'</p>':'')
+    +'</body></html>';
+  return h;}
+function chkPrintOpen(t,f){
+  var w=window.open("","_blank");
+  if(!w){toast("Allow pop-ups to print");return;}
+  w.document.open();w.document.write(chkPrintHtml(t,f));w.document.close();}
+
+/* ---- read a Word checklist (.docx) in the browser and turn it into editable text ---- */
+function docxToText(buf){
+  var u=new Uint8Array(buf),dv=new DataView(buf),eocd=-1;
+  for(var i=u.length-22;i>=Math.max(0,u.length-70000);i--){if(dv.getUint32(i,true)===0x06054b50){eocd=i;break;}}
+  if(eocd<0)return Promise.reject(new Error("Not a Word file"));
+  var cnt=dv.getUint16(eocd+10,true),off=dv.getUint32(eocd+16,true),ent=null;
+  for(var n=0;n<cnt;n++){
+    var cm=dv.getUint16(off+10,true),csz=dv.getUint32(off+20,true),nl=dv.getUint16(off+28,true),el=dv.getUint16(off+30,true),cl=dv.getUint16(off+32,true),lo=dv.getUint32(off+42,true);
+    var nm=new TextDecoder().decode(u.subarray(off+46,off+46+nl));
+    if(nm==="word/document.xml"){ent={cm:cm,csz:csz,lo:lo};break;}
+    off+=46+nl+el+cl;}
+  if(!ent)return Promise.reject(new Error("document.xml not found"));
+  var ln=dv.getUint16(ent.lo+26,true),le=dv.getUint16(ent.lo+28,true),st=ent.lo+30+ln+le,data=u.subarray(st,st+ent.csz);
+  var p;
+  if(ent.cm===0)p=Promise.resolve(data);
+  else{
+    if(typeof DecompressionStream==="undefined")return Promise.reject(new Error("This browser cannot read Word files. Paste the items instead."));
+    var ds=new DecompressionStream("deflate-raw"),wr=ds.writable.getWriter();wr.write(data);wr.close();
+    p=new Response(ds.readable).arrayBuffer().then(function(b){return new Uint8Array(b);});}
+  return p.then(function(b){return docxXmlToText(new TextDecoder().decode(b));});}
+function docxXmlToText(xml){
+  var doc=new DOMParser().parseFromString(xml,"application/xml"),W="http://schemas.openxmlformats.org/wordprocessingml/2006/main";
+  var out=[],body=doc.getElementsByTagNameNS(W,"body")[0];
+  function ptext(p){var t="";Array.prototype.forEach.call(p.getElementsByTagNameNS(W,"t"),function(x){t+=x.textContent;});return t.replace(/\s+/g," ").trim();}
+  function ctext(c){var a=[];Array.prototype.forEach.call(c.getElementsByTagNameNS(W,"p"),function(p){var t=ptext(p);if(t)a.push(t);});return a.join(" ");}
+  var gotTable=false,done=false,title="";
+  Array.prototype.forEach.call(body.childNodes,function(nd){
+    if(nd.localName==="p"){var t=ptext(nd);if(t&&!title&&!gotTable)title=t;}
+    if(nd.localName!=="tbl"||done)return;
+    var rows=Array.prototype.filter.call(nd.childNodes,function(r){return r.localName==="tr";});
+    rows.forEach(function(r){
+      var cells=Array.prototype.filter.call(r.childNodes,function(c){return c.localName==="tc";}).map(ctext);
+      var ne=cells.filter(function(x){return x;});
+      if(!ne.length)return;
+      if(/^(s\.?\s?no|no\.?|#)$/i.test(cells[0])){gotTable=true;return;}
+      if(!gotTable&&cells.length<=4&&/:\s*$/.test(cells[0]))return;
+      if(ne.length===1||(cells.length>1&&ne.every(function(x){return x===ne[0];}))){if(!title&&!gotTable)title=ne[0];else out.push("## "+ne[0]);return;}
+      if(cells.length>=2&&cells[1]){
+        var ref=cells[2]||"";if(/^[□☐ ]*$/.test(ref)||/^(yes|no)$/i.test(ref))ref="";
+        out.push((cells[0]||"")+" | "+cells[1]+" | "+ref);gotTable=true;}});
+    if(gotTable)done=true;});
+  if(!out.length){
+    Array.prototype.forEach.call(body.getElementsByTagNameNS(W,"p"),function(p){var t=ptext(p);if(!t)return;
+      if(/^[A-Z]\.\s/.test(t)||t===t.toUpperCase()&&t.length<80)out.push("## "+t);else out.push(" | "+t+" | ");});}
+  title=title.split(/ PREVENTIVE| In Accordance/i)[0].trim();
+  return (title?"# "+title+"\n":"")+out.join("\n");}
+function textToTpl(txt,name,sites){
+  var secs=[],cur=null,title=name,cnt=0;
+  txt.split("\n").forEach(function(line){
+    line=line.trim();if(!line)return;
+    if(/^#\s/.test(line)&&!/^##/.test(line)){title=title||line.replace(/^#\s*/,"");return;}
+    if(/^##/.test(line)){cur={t:line.replace(/^#+\s*/,""),items:[]};secs.push(cur);return;}
+    if(!cur){cur={t:"CHECKLIST",items:[]};secs.push(cur);}
+    var p=line.split("|").map(function(x){return x.trim();});
+    var n,t,ref="";
+    if(p.length>=2){n=p[0];t=p[1];ref=p[2]||"";}else{n="";t=p[0];}
+    if(!t)return;cnt++;if(!n)n=String(cnt);
+    cur.items.push({n:n,t:t,ref:ref});});
+  secs=secs.filter(function(sc){return sc.items.length;});
+  if(!secs.length)return null;
+  var mk=function(k,l,t,r){return {k:k,l:l,t:t,rem:!!r};};
+  return {id:"c"+uid(),name:name||title||"Special checklist",short:(name||"Special").slice(0,14),title:title||name||"Checklist",
+    sub:["PREVENTIVE MAINTENANCE CHECKLIST"],refCol:"REFERENCE",sites:sites,std:false,foot:"",sections:secs,
+    hdr:[mk("client","Client Name","text"),mk("loc","Location","text"),mk("svc","Service Type","svc"),mk("amc","AMC No","text"),mk("date","Inspection Date","date"),mk("svcno","Service No","text"),mk("by","Inspected By","auto"),mk("x_system","System Make/Model","text",1)]};}
+function specialModal(){
+  var seen={},sites=[];state.amc.forEach(function(a){var n=String(a.site||"").trim();if(n&&!seen[n]){seen[n]=1;sites.push(n);}});sites.sort();
+  openModal("Special site checklist",
+    '<div class="field"><label>Name of checklist</label><input id="spName" placeholder="e.g. Jotun Dammam-2 Fire Pump"></div>'
+    +'<div class="field"><label>Sites that use it (tick one or more)</label><div style="max-height:160px;overflow:auto;border:1px solid var(--line);border-radius:8px;padding:6px">'
+    +sites.map(function(n,i){return '<label style="display:block;padding:3px 0"><input type="checkbox" class="spSite" value="'+esc(n)+'"> '+esc(n)+'</label>';}).join("")+'</div></div>'
+    +'<div class="field"><label>Upload Word file (.docx)</label><input type="file" id="spFile" accept=".docx"></div>'
+    +'<div class="field"><label>Items (check and correct here). Format: <code>## Section</code> then <code>no | activity | reference</code></label><textarea id="spTxt" rows="10" placeholder="## A. PANEL\n1 | Check panel for damage | NFPA 72: 14.3\n2 | Check batteries | "></textarea></div>'
+    +'<p class="hint">If the site list is empty or the site is not in it, leave all unticked: the checklist then shows for every site.</p>',
+  function(){
+    var name=val("spName"),sl=Array.prototype.map.call(document.querySelectorAll(".spSite:checked"),function(x){return x.value;});
+    if(!name)return mErr("Enter a name for the checklist.");
+    var t=textToTpl(document.getElementById("spTxt").value,name,sl);
+    if(!t)return mErr("No items found. Upload a file or paste the items.");
+    techPost({action:"a_tpl_save",tpl:t}).then(function(r){
+      if(r&&r.ok){closeModal();TECHD.tpls=r.tpls;toast("Checklist saved");if(tab==="tech")render();}else mErr((r&&r.error)||"Could not save");
+    }).catch(function(){mErr("No connection");});});
+  var fi=document.getElementById("spFile");
+  fi.onchange=function(){
+    var f=fi.files[0];if(!f)return;
+    f.arrayBuffer().then(docxToText).then(function(tx){document.getElementById("spTxt").value=tx;
+      var m=tx.match(/^#\s(.+)/);if(m&&!val("spName"))document.getElementById("spName").value=m[1].slice(0,60);})
+      .catch(function(e){mErr(e.message||"Could not read the file");});};}
+function installStd(){
+  fetch("checklists.json?"+Date.now()).then(function(r){return r.json();}).then(function(j){
+    var have={};TECHD.tpls.forEach(function(t){have[t.id]=1;});
+    var list=(j.templates||[]).filter(function(t){return !have[t.id];});
+    if(!list.length){toast("Standard checklists already installed");return null;}
+    var chain=Promise.resolve();
+    list.forEach(function(t){chain=chain.then(function(){return techPost({action:"a_tpl_save",tpl:t}).then(function(r){if(r&&r.ok)TECHD.tpls=r.tpls;else throw new Error((r&&r.error)||"failed");});});});
+    return chain.then(function(){toast(list.length+" checklist(s) installed");if(tab==="tech")render();});
+  }).catch(function(e){toast("Could not install: "+(e.message||"error"));});}
 
 function pinModal(id){
   var nm=techName(id);

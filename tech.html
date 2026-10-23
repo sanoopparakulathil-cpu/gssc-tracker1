@@ -53,6 +53,19 @@ textarea{min-height:80px;font-family:inherit}
 .hist:last-child{border:0}
 .pend{font-size:12px;color:var(--warn);font-weight:600}
 .center{max-width:420px;margin:40px auto}
+.cf h4{margin:18px 0 6px;font-size:14px;color:var(--navy);background:#E9EEF7;padding:8px 10px;border-radius:8px}
+.cf .it{background:#fff;border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px}
+.cf .it .n{font-weight:700;color:var(--navy)}
+.cf .it .ref{font-size:12px;color:var(--mute)}
+.cf .yn{display:flex;gap:8px;margin:10px 0 8px}
+.cf .yn button{flex:1;border:1.5px solid var(--line);background:#fff;border-radius:10px;padding:12px 0;font-size:16px;font-weight:600;color:var(--mute)}
+.cf .yn button.on-y{background:var(--okbg);border-color:var(--ok);color:var(--ok)}
+.cf .yn button.on-n{background:var(--badbg);border-color:var(--bad);color:var(--bad)}
+.cf .yn button.on-na{background:#EEF1F6;border-color:var(--mute);color:var(--ink)}
+.cf textarea{min-height:64px;font-size:16px}
+.cf .bar{position:sticky;bottom:0;background:#fff;border-top:1px solid var(--line);padding:10px 0;margin-top:14px;display:flex;gap:8px;align-items:center}
+.cf .g2{display:grid;grid-template-columns:1fr 1fr;gap:0 10px}
+.cf .fr{border:1px solid var(--line);border-radius:10px;padding:8px 10px;margin-bottom:10px;background:#fff}
 .toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#202124;color:#fff;padding:12px 18px;border-radius:10px;font-size:15px;z-index:30;max-width:90%}
 </style>
 </head>
@@ -65,6 +78,7 @@ var CFG_KEY="gssc-tech-cfg", Q_KEY="gssc-tech-q", S_KEY="gssc-tech-s";
 var cfg={url:"",name:"",pin:"",stay:true};
 var S=null;            // last state from server
 var LQ={amc:"",gmc:""}, LF={amc:"open",gmc:"open"};
+var CF=null, CFRO=false, CFK="gssc-tech-cf";
 var tab="jobs", busy=false, loginErr="", names=null, online=true, lastSync=0, flushing=false;
 var el=function(id){return document.getElementById(id);};
 var app=el("app");
@@ -156,7 +170,8 @@ function toolView(t){
 }
 
 /* ---------- screens ---------- */
-function draw(){
+function draw(force){
+  if(!force&&CF&&tab==='chk'&&document.querySelector('main .cf')){var hs=document.querySelector('header small');if(hs){var pq0=queue().length;hs.textContent=S?(S.today+(online?'':' \u00b7 offline')+(pq0?' \u00b7 '+pq0+' waiting to send':'')):'';}return;}
   if(!cfg.url){return drawSetup();}
   if(cfg.name&&cfg.pin&&!S){app.innerHTML='<div class="center card"><p class="sub">Loading your jobs\u2026</p></div>';return;}
   if(!cfg.name||!cfg.pin||!S){return drawLogin();}
@@ -168,11 +183,12 @@ function draw(){
     +'<button data-t="duty" aria-selected="'+(tab==="duty")+'">Duty</button>'
     +'<button data-t="amc" aria-selected="'+(tab==="amc")+'">AMC</button>'
     +'<button data-t="gmc" aria-selected="'+(tab==="gmc")+'">GMC</button>'
+    +'<button data-t="chk" aria-selected="'+(tab==="chk")+'">Checklist</button>'
     +'<button data-t="tools" aria-selected="'+(tab==="tools")+'">Tools</button>'
     +'<button data-t="hist" aria-selected="'+(tab==="hist")+'">History</button></nav><main>';
   if(!online)h+='<div class="banner b-warn">No signal. Your updates are saved on this phone and will send when the signal returns.</div>';
   if(held.length&&tab!=="tools")h+='<div class="banner b-warn">You still hold: <b>'+held.map(function(t){return esc(t.name);}).join(", ")+'</b>. Return it in the Tools tab when you finish.</div>';
-  h+= tab==="jobs"?viewJobs():(tab==="tools"?viewTools():(tab==="hist"?viewHist():(tab==="duty"?viewDuty():viewList(tab))));
+  h+= tab==="jobs"?viewJobs():(tab==="chk"?viewChk():tab==="tools"?viewTools():(tab==="hist"?viewHist():(tab==="duty"?viewDuty():viewList(tab))));
   h+='</main>';
   app.innerHTML=h;
   wire();
@@ -336,6 +352,7 @@ function wire(){
   Array.prototype.forEach.call(document.querySelectorAll("[data-start]"),function(x){x.onclick=function(){
     var j=findJob(x.dataset.start);send("t_job",{act:"start",dutyId:j.id,ref:j.ref,site:j.site});};});
   Array.prototype.forEach.call(document.querySelectorAll("[data-done]"),function(x){x.onclick=function(){var j=findJob(x.dataset.done),L=linkedRow(j);if(L)rowModal(L.kind,L.row);else completeModal(j);};});
+  if(tab==='chk')wireChk();
   var lq=el("lq");
   if(lq){lq.oninput=function(){LQ[tab]=lq.value;el("lst").innerHTML=listHtml(tab);wireRows();};
     el("lf").onchange=function(){LF[tab]=el("lf").value;el("lst").innerHTML=listHtml(tab);wireRows();};wireRows();}
@@ -345,6 +362,163 @@ function wire(){
 function wireRows(){
   Array.prototype.forEach.call(document.querySelectorAll("[data-row]"),function(x){x.onclick=function(){
     var p=x.dataset.row.split("|"),r=(S[p[0]]||[]).filter(function(y){return y.id===p[1];})[0];if(r)rowModal(p[0],r);};});
+}
+
+/* ---------- checklists ---------- */
+function tplById(id){return (S.tpls||[]).filter(function(t){return t.id===id;})[0];}
+function chkSave(){try{if(CF)localStorage.setItem(CFK,JSON.stringify({f:CF,ro:CFRO}));else localStorage.removeItem(CFK);}catch(e){}}
+function chkCounts(){
+  var t=tplById(CF.tplId),total=0,done=0;
+  if(!t)return {total:0,done:0};
+  t.sections.forEach(function(sc,si){sc.items.forEach(function(it,ii){total++;var a=CF.ans[si+"_"+ii];if(a&&a.v)done++;});});
+  return {total:total,done:done};
+}
+function sendChk(status){
+  CF.status=status;
+  var q=queue().filter(function(x){return !(x.action==="t_chk_save"&&x.ev&&x.ev.form&&x.ev.form.id===CF.id);});
+  setQueue(q);
+  send("t_chk_save",{form:JSON.parse(JSON.stringify(CF))});
+}
+function viewChk(){
+  if(CF)return formHtml();
+  var h='<button class="btn wide" id="cNew">New checklist</button><div style="height:12px"></div>';
+  var fl=(S.forms||[]).slice();
+  queue().forEach(function(x){if(x.action==="t_chk_save"&&x.ev&&x.ev.form){var f=x.ev.form;
+    if(!fl.some(function(y){return y.id===f.id;}))fl.unshift({id:f.id,site:f.site,tplName:f.tplName,date:f.date,status:f.status,done:0,total:0,pend:true});}});
+  if(!fl.length)return h+'<div class="empty">No checklists yet. Tap New checklist at a site.<br>Everything you fill is saved and your supervisor can check it later.</div>';
+  return h+fl.map(function(f){
+    var pend=queue().some(function(x){return x.action==="t_chk_save"&&x.ev&&x.ev.form&&x.ev.form.id===f.id;});
+    return '<div class="card"><div style="display:flex;justify-content:space-between;gap:8px"><h3>'+esc(f.site)+'</h3><span class="pill '+(f.status==="final"?'p-Completed':'p-out')+'">'+(f.status==="final"?'Submitted':'Draft')+'</span></div>'
+      +'<div class="sub">'+esc(f.tplName||"")+' · '+esc(dshort(f.date))+(f.total?' · '+f.done+'/'+f.total+' answered':'')+'</div>'
+      +(pend?'<div class="pend">Waiting to send…</div>':'')
+      +'<div class="row"><button class="btn sec" data-copen="'+esc(f.id)+'">'+(f.status==="final"?'View':'Continue')+'</button></div></div>';}).join("");
+}
+function siteChoices(){
+  var seen={},out=[];
+  (S.amc||[]).forEach(function(r){var n=String(r.site||"").trim();if(n&&!seen[n]){seen[n]=1;out.push(n);}});
+  (S.sites||[]).forEach(function(n){if(n&&!seen[n]){seen[n]=1;out.push(n);}});
+  return out.sort();
+}
+function newChkModal(){
+  var sites=siteChoices();
+  modal('<h2>New checklist</h2>'
+    +'<label>Site</label><input id="nSite" list="nSiteList" autocomplete="off" placeholder="Type or choose site"><datalist id="nSiteList">'+sites.map(function(n){return '<option value="'+esc(n)+'">';}).join("")+'</datalist>'
+    +'<label>Checklist</label><select id="nTpl"></select>'
+    +'<label>Service type</label><select id="nSvc"><option>Monthly</option><option>Quarterly</option></select>'
+    +'<div id="nErr" class="banner b-bad" style="display:none;margin-top:12px"></div>'
+    +'<div class="row"><button class="btn go" style="flex:1" id="mOk">Start</button><button class="btn sec" id="mNo">Cancel</button></div>',
+  function(m){
+    function fill(){
+      var site=el("nSite").value.trim(),sel=el("nTpl"),keep=sel.value;
+      var list=(S.tpls||[]).filter(function(t){return !(t.sites&&t.sites.length)||t.sites.indexOf(site)>-1;});
+      list.sort(function(a,b){var as=(a.sites&&a.sites.length)?0:1,bs=(b.sites&&b.sites.length)?0:1;return as-bs;});
+      sel.innerHTML=list.map(function(t){return '<option value="'+esc(t.id)+'">'+((t.sites&&t.sites.length)?'★ ':'')+esc(t.name)+'</option>';}).join("");
+      if(keep)sel.value=keep;
+    }
+    el("nSite").oninput=fill;el("nSite").onchange=fill;fill();
+    el("mNo").onclick=function(){m.remove();};
+    el("mOk").onclick=function(){
+      var site=el("nSite").value.trim(),tid=el("nTpl").value,bad=function(t){var e=el("nErr");e.textContent=t;e.style.display="block";};
+      if(!site)return bad("Choose or type the site.");
+      var t=tplById(tid);if(!t)return bad("No checklist available. Ask your supervisor to install the checklists.");
+      var amc="";
+      (S.amc||[]).forEach(function(r){if(!amc&&r.site===site&&r.status!=="Completed")amc=r.no||"";});
+      var mem=(S.siteData||{})[site]||{},hdr={};
+      t.hdr.forEach(function(f){
+        if(f.k==="client")hdr.client=site;else if(f.k==="amc")hdr.amc=amc;
+        else if(f.k==="by")hdr.by=cfg.name;else if(f.k==="date")hdr.date=S.today;
+        else if(f.rem&&mem[f.k])hdr[f.k]=mem[f.k];});
+      CF={id:uid().slice(0,16),tplId:t.id,tplName:t.name,site:site,date:S.today,svc:el("nSvc").value,status:"draft",hdr:hdr,ans:{},finds:[],sign:{tech:cfg.name,client:""}};
+      CFRO=false;chkSave();m.remove();draw(true);window.scrollTo(0,0);
+    };
+  });
+}
+function formHtml(){
+  var t=tplById(CF.tplId);
+  if(!t)return '<div class="banner b-bad">This checklist is no longer available.</div><button class="btn sec" id="cBack">Back</button>';
+  var ro=CFRO,c=chkCounts();
+  var h='<div class="cf"><div class="row" style="margin-top:0"><button class="btn sec" id="cBack">← Back</button></div>'
+    +'<h3 style="margin:12px 0 2px">'+esc(t.title)+'</h3><div class="sub">'+esc((t.sub||[]).join(" · "))+'</div>'
+    +'<div class="card" style="margin-top:12px"><label style="margin-top:0">Site</label><input value="'+esc(CF.site)+'" disabled>'
+    +'<div class="g2">';
+  t.hdr.forEach(function(f){
+    var v=f.k==="date"?CF.date:(f.k==="svc"?CF.svc:(CF.hdr[f.k]||""));
+    h+='<div><label>'+esc(f.l)+'</label>'
+      +(f.t==="svc"?'<select data-hf="svc"'+(ro?' disabled':'')+'><option'+(v==="Monthly"?' selected':'')+'>Monthly</option><option'+(v==="Quarterly"?' selected':'')+'>Quarterly</option></select>'
+        :'<input '+(f.t==="date"?'type="date" max="'+esc(S.today)+'" ':'')+'data-hf="'+esc(f.k)+'" value="'+esc(v)+'"'+(ro?' disabled':'')+'>')+'</div>';});
+  h+='</div></div>';
+  t.sections.forEach(function(sc,si){
+    h+='<h4>'+esc(sc.t)+'</h4>';
+    sc.items.forEach(function(it,ii){
+      var k=si+"_"+ii,a=CF.ans[k]||{};
+      h+='<div class="it"><div><span class="n">'+esc(it.n)+'.</span> '+esc(it.t)+'</div>'+(it.ref?'<div class="ref">'+esc(it.ref)+'</div>':'')
+        +'<div class="yn" data-k="'+k+'">'
+        +'<button data-v="y" class="'+(a.v==="y"?'on-y':'')+'"'+(ro?' disabled':'')+'>Yes</button>'
+        +'<button data-v="n" class="'+(a.v==="n"?'on-n':'')+'"'+(ro?' disabled':'')+'>No</button>'
+        +'<button data-v="na" class="'+(a.v==="na"?'on-na':'')+'"'+(ro?' disabled':'')+'>N/A</button></div>'
+        +'<textarea data-c="'+k+'" placeholder="Comments / readings"'+(ro?' disabled':'')+'>'+esc(a.c||"")+'</textarea></div>';});});
+  h+='<h4>Deficiencies &amp; findings</h4><div id="fndBox">'+findsHtml()+'</div>'
+    +(ro?'':'<button class="btn sec wide" id="fAdd">+ Add finding</button>')
+    +'<h4>Sign-off</h4><div class="card"><label style="margin-top:0">GSSC technician (printed name)</label><input data-sg="tech" value="'+esc(CF.sign.tech||"")+'"'+(ro?' disabled':'')+'>'
+    +'<label>Client representative (printed name)</label><input data-sg="client" value="'+esc(CF.sign.client||"")+'"'+(ro?' disabled':'')+'></div>';
+  h+='<div class="bar"><span id="cProg" class="sub" style="flex:1">'+c.done+' of '+c.total+' answered</span>'
+    +(ro?'':'<button class="btn sec" id="cSave">Save draft</button><button class="btn go" id="cSub">Submit</button>')+'</div></div>';
+  return h;
+}
+function findsHtml(){
+  var ro=CFRO;
+  if(!CF.finds.length)return '<div class="sub" style="margin-bottom:10px">No deficiencies recorded.</div>';
+  return CF.finds.map(function(r,i){
+    return '<div class="fr"><label style="margin-top:0">Finding</label><textarea data-fd="'+i+'|f"'+(ro?' disabled':'')+'>'+esc(r.f)+'</textarea>'
+      +'<label>Location / device</label><input data-fd="'+i+'|l" value="'+esc(r.l)+'"'+(ro?' disabled':'')+'>'
+      +'<label>Priority</label><select data-fd="'+i+'|p"'+(ro?' disabled':'')+'>'+["","High","Medium","Low"].map(function(x){return '<option'+(r.p===x?' selected':'')+'>'+x+'</option>';}).join("")+'</select>'
+      +'<label>Recommended action</label><textarea data-fd="'+i+'|a"'+(ro?' disabled':'')+'>'+esc(r.a)+'</textarea>'
+      +(ro?'':'<div class="row"><button class="btn sec" data-fdel="'+i+'">Remove</button></div>')+'</div>';}).join("");
+}
+function wireChk(){
+  var b=el("cNew");if(b)b.onclick=newChkModal;
+  Array.prototype.forEach.call(document.querySelectorAll("[data-copen]"),function(x){x.onclick=function(){openChk(x.dataset.copen);};});
+  if(!CF)return;
+  b=el("cBack");if(b)b.onclick=function(){
+    if(!CFRO&&!confirm("Leave this checklist? What you typed stays saved on this phone. Press Save draft first to send it to your supervisor."))return;
+    CF=null;chkSave();draw(true);};
+  var root=document.querySelector(".cf");if(!root||CFRO&&!root)return;
+  function prog(){var c=chkCounts();el("cProg").textContent=c.done+" of "+c.total+" answered";}
+  Array.prototype.forEach.call(root.querySelectorAll(".yn"),function(box){
+    Array.prototype.forEach.call(box.querySelectorAll("button"),function(bt){bt.onclick=function(){
+      var k=box.dataset.k,a=CF.ans[k]||(CF.ans[k]={v:"",c:""});
+      a.v=(a.v===bt.dataset.v)?"":bt.dataset.v;
+      Array.prototype.forEach.call(box.querySelectorAll("button"),function(o){o.className=(a.v===o.dataset.v)?"on-"+o.dataset.v:"";});
+      chkSave();prog();};});});
+  Array.prototype.forEach.call(root.querySelectorAll("[data-c]"),function(x){x.oninput=function(){
+    var k=x.dataset.c,a=CF.ans[k]||(CF.ans[k]={v:"",c:""});a.c=x.value;chkSave();};});
+  Array.prototype.forEach.call(root.querySelectorAll("[data-hf]"),function(x){x.oninput=x.onchange=function(){
+    var k=x.dataset.hf;if(k==="svc")CF.svc=x.value;else if(k==="date")CF.date=x.value;else CF.hdr[k]=x.value;chkSave();};});
+  Array.prototype.forEach.call(root.querySelectorAll("[data-sg]"),function(x){x.oninput=function(){CF.sign[x.dataset.sg]=x.value;chkSave();};});
+  function wireFinds(){
+    Array.prototype.forEach.call(root.querySelectorAll("[data-fd]"),function(x){x.oninput=x.onchange=function(){
+      var p=x.dataset.fd.split("|");CF.finds[+p[0]][p[1]]=x.value;chkSave();};});
+    Array.prototype.forEach.call(root.querySelectorAll("[data-fdel]"),function(x){x.onclick=function(){
+      CF.finds.splice(+x.dataset.fdel,1);el("fndBox").innerHTML=findsHtml();wireFinds();chkSave();};});}
+  wireFinds();
+  b=el("fAdd");if(b)b.onclick=function(){CF.finds.push({f:"",l:"",p:"",a:""});el("fndBox").innerHTML=findsHtml();wireFinds();chkSave();};
+  b=el("cSave");if(b)b.onclick=function(){sendChk("draft");toast("Saved");};
+  b=el("cSub");if(b)b.onclick=function(){
+    var c=chkCounts();
+    if(c.done<c.total){toast("Answer every item first ("+(c.total-c.done)+" left). Use N/A if it does not apply.");return;}
+    if(!CF.sign.tech){toast("Enter the technician name in Sign-off.");return;}
+    if(!confirm("Submit this checklist? You cannot change it after this."))return;
+    sendChk("final");CF=null;chkSave();draw(true);toast("Submitted. Your supervisor can see it now.");};
+}
+function openChk(id){
+  var q=queue().filter(function(x){return x.action==="t_chk_save"&&x.ev&&x.ev.form&&x.ev.form.id===id;})[0];
+  var saved=lsGet(CFK,null);
+  if(saved&&saved.f&&saved.f.id===id){CF=saved.f;CFRO=!!saved.ro;draw(true);return;}
+  if(q){CF=JSON.parse(JSON.stringify(q.ev.form));CFRO=CF.status==="final";draw(true);return;}
+  post(auth({action:"t_chk_get",id:id})).then(function(r){
+    if(!r||!r.ok){toast((r&&r.error)||"Could not open");return;}
+    CF=r.form;CFRO=CF.status==="final";chkSave();draw(true);window.scrollTo(0,0);
+  }).catch(function(){toast("No connection");});
 }
 function findJob(id){return S.jobs.filter(function(j){return j.id===id;})[0];}
 function findTool(id){return S.tools.filter(function(t){return t.id===id;})[0];}
@@ -457,6 +631,7 @@ window.addEventListener("online",function(){online=true;flush().then(refresh);})
 window.addEventListener("offline",function(){online=false;draw();});
 document.addEventListener("visibilitychange",function(){if(!document.hidden&&cfg.pin){flush().then(refresh);}});
 setInterval(function(){if(!document.hidden&&cfg.pin)flush().then(refresh);},60000);
+var sv=lsGet(CFK,null);if(sv&&sv.f){CF=sv.f;CFRO=!!sv.ro;tab='chk';}
 if(cfg.url&&cfg.name&&cfg.pin){var cs=lsGet(S_KEY,null);if(cs&&cs.tech===cfg.name)S=cs;draw();flush().then(refresh);}else draw();
 if(navigator.serviceWorker){navigator.serviceWorker.register("sw.js").catch(function(){});}
 })();
