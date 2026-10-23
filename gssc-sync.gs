@@ -28,7 +28,7 @@ var CLAUDE_MODEL = "claude-sonnet-5";
 
 /* Bump this whenever you paste in a new copy of the script. The app can read it
    back, so you can tell at a glance whether your deployment is up to date. */
-var SCRIPT_VERSION = "2026-10-24-checklist";
+var SCRIPT_VERSION = "2026-10-24-forms";
 
 var FILE_NAME = "gssc-tracker-data.json";
 
@@ -212,6 +212,9 @@ function techLoad_() {
   if (!d.tpls) d.tpls = [];
   if (!d.forms) d.forms = [];
   if (!d.sites) d.sites = {};
+  if (!d.sd) d.sd = {};
+  if (!d.mrls) d.mrls = [];
+  if (!d.photos) d.photos = {};
   if (!d.tools || !d.tools.length) {
     d.tools = DEFAULT_TOOLS.map(function (n) { return { id: newId_(), name: n }; });
   }
@@ -224,6 +227,9 @@ function techSave_(h) {
   h.d.events = h.d.events.filter(function (e) { return e.ts >= cut; });
   if (h.d.events.length > 4000) h.d.events = h.d.events.slice(-4000);
   if (h.d.forms.length > 3000) h.d.forms = h.d.forms.slice(-3000);
+  if (h.d.mrls.length > 2000) h.d.mrls = h.d.mrls.slice(-2000);
+  var pk = Object.keys(h.d.photos);
+  if (pk.length > 6000) pk.slice(0, pk.length - 6000).forEach(function (k) { delete h.d.photos[k]; });
   h.f.setContent(JSON.stringify(h.d));
 }
 
@@ -354,7 +360,6 @@ function rowFields_(s) {
 function listsFor_(main, h) {
   var rs = rowState_(h);
   var cur = String(main.curMonth || dayStr_(0).slice(0, 7));
-  var recent = dayStr_(-60);
   var amc = [], gmc = [];
   (main.amc || []).forEach(function (a) {
     var s = rs["amc|" + a.id], m = String(a.month || "");
@@ -371,7 +376,7 @@ function listsFor_(main, h) {
   (main.gmc || []).forEach(function (g) {
     var s = rs["gmc|" + g.id];
     var fin = g.status === "Completed" || (s && s.st === "Completed");
-    if (fin && !s && String(g.doneDate || "") < recent) return;
+    if (fin && !s) return;   // completed GMC jobs are not shown to technicians
     var f = rowFields_(s);
     gmc.push({ id: g.id, month: String(g.month || ""), no: g.gmcNo || "", client: g.client || g.clientRaw || "", desc: g.desc || "",
       items: scopeItems_(g.scope), sched: g.schedDate || "", status: g.status === "Completed" ? "Completed" : (s ? s.st : (g.status || "Open")),
@@ -419,13 +424,75 @@ function techState_(tech, h, main) {
   return { ok: true, tech: tech.name, today: dayStr_(0), jobs: jobs, tools: toolState_(h.d), history: mine,
            sites: siteNames_(main), amc: L.amc, gmc: L.gmc, team: teamDuty_(main),
            tpls: h.d.tpls, siteData: h.d.sites,
-           forms: h.d.forms.filter(function (f) { return f.techId === tech.id; }).slice(-40).reverse().map(formSum_) };
+           forms: h.d.forms.filter(function (f) { return f.techId === tech.id; }).slice(-40).reverse().map(formSum_),
+           sdList: sdList_(h), mrls: h.d.mrls.filter(function (f) { return f.techId === tech.id; }).slice(-30).reverse().map(mrlSum_) };
 }
 
 /* ---------- checklists filled on the phone ---------- */
 function formSum_(f) {
   return { id: f.id, site: f.site, tplId: f.tplId, tplName: f.tplName, date: f.date, svc: f.svc || "", status: f.status,
            tech: f.tech, ts: f.mod, done: f.done || 0, total: f.total || 0 };
+}
+/* ---------- site system data (filled once per site, kept, updated later) ---------- */
+function sdList_(h) {
+  var o = {};
+  Object.keys(h.d.sd).forEach(function (k) { var r = h.d.sd[k]; o[k] = { mod: r.mod, by: r.by, n: r.n || 0 }; });
+  return o;
+}
+function sdSave_(tech, h, ev) {
+  var site = cleanStr_(ev.site, 120).trim();
+  if (!site) return { error: "Choose the site." };
+  var data = {}, n = 0, keys = Object.keys(ev.data || {});
+  if (keys.length > 900) return { error: "Too much data." };
+  keys.forEach(function (k) {
+    if (!/^[a-z0-9]{2,30}$/.test(k)) return;
+    var v = cleanStr_(ev.data[k], 200);
+    if (v !== "") { data[k] = v; n++; }
+  });
+  var prev = h.d.sd[site];
+  h.d.sd[site] = { data: data, by: tech.name, byId: tech.id, mod: Date.now(), n: n, first: prev ? prev.first : tech.name };
+  techSave_(h);
+  return { ok: true };
+}
+/* ---------- material requirement list after service (with photos) ---------- */
+function mrlSum_(f) {
+  return { id: f.id, site: f.site, date: f.date, status: f.status, tech: f.tech, ts: f.mod, n: (f.items || []).length };
+}
+function mrlSave_(tech, h, form, isAdmin) {
+  form = form || {};
+  var id = cleanStr_(form.id, 40);
+  if (!/^[A-Za-z0-9_-]{4,40}$/.test(id)) return { error: "Bad list id." };
+  var site = cleanStr_(form.site, 120).trim();
+  if (!site) return { error: "Choose the site." };
+  var date = cleanStr_(form.date, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > dayStr_(1)) return { error: "Check the service date." };
+  var status = form.status === "final" ? "final" : "draft";
+  var hdr = {};
+  ["client", "loc", "rep", "amc", "svcno", "sys", "tech", "sup", "sub"].forEach(function (k) { hdr[k] = cleanStr_((form.hdr || {})[k], 120); });
+  var items = (form.items || []).slice(0, 60).map(function (it) {
+    var ph = (it.ph || []).filter(function (x) { return /^[A-Za-z0-9_-]{10,60}$/.test(String(x)); }).slice(0, 4);
+    return { d: cleanStr_(it.d, 300), m: cleanStr_(it.m, 160), u: cleanStr_(it.u, 12), q: cleanStr_(it.q, 12), r: cleanStr_(it.r, 300), ph: ph };
+  }).filter(function (it) { return it.d.trim(); });
+  if (status === "final") {
+    if (!items.length) return { error: "Add at least one item." };
+    var noQ = items.filter(function (it) { return !it.q.trim() || !it.u.trim(); }).length;
+    if (noQ) return { error: noQ + " item(s) have no quantity or unit." };
+  }
+  var cur = null, idx = -1;
+  h.d.mrls.forEach(function (f, i) { if (f.id === id) { cur = f; idx = i; } });
+  if (cur) {
+    if (!isAdmin && cur.techId !== tech.id) return { error: "This list belongs to another technician." };
+    if (!isAdmin && cur.status === "final") return { error: "Already submitted. Ask your supervisor to reopen it." };
+  }
+  var rec = { id: id, techId: cur ? cur.techId : tech.id, tech: cur ? cur.tech : tech.name, site: site, date: date, status: status,
+              hdr: hdr, items: items, mod: Date.now() };
+  if (idx > -1) h.d.mrls[idx] = rec; else h.d.mrls.push(rec);
+  techSave_(h);
+  return { ok: true, form: rec };
+}
+function photoFolder_() {
+  var it = DriveApp.getFoldersByName("GSSC Tech Photos");
+  return it.hasNext() ? it.next() : DriveApp.createFolder("GSSC Tech Photos");
 }
 function tplItems_(t) {
   var n = 0; (t.sections || []).forEach(function (sc) { n += (sc.items || []).length; }); return n;
@@ -527,6 +594,37 @@ function techAct_(body) {
   if (au.error) return json_({ ok: false, error: au.error });
   var tech = au.tech;
   if (act === "t_state") return json_(techState_(tech, h, main));
+  if (act === "t_site_get") {
+    var sr = h.d.sd[cleanStr_(body.site, 120)];
+    return json_({ ok: true, rec: sr || null });
+  }
+  if (act === "t_site_save") {
+    var sv = sdSave_(tech, h, body.ev || {});
+    if (sv.error) return json_({ ok: false, error: sv.error });
+    return json_(techState_(tech, h, main));
+  }
+  if (act === "t_mrl_get") {
+    var mf = null;
+    h.d.mrls.forEach(function (f) { if (f.id === body.id && f.techId === tech.id) mf = f; });
+    return mf ? json_({ ok: true, form: mf }) : json_({ ok: false, error: "List not found." });
+  }
+  if (act === "t_mrl_save") {
+    var mr = mrlSave_(tech, h, (body.ev || {}).form, false);
+    if (mr.error) return json_({ ok: false, error: mr.error });
+    return json_(techState_(tech, h, main));
+  }
+  if (act === "t_photo") {
+    var pid = cleanStr_(body.pid, 40);
+    if (!/^[A-Za-z0-9_-]{6,40}$/.test(pid)) return json_({ ok: false, error: "Bad photo id." });
+    if (h.d.photos[pid]) return json_({ ok: true, fileId: h.d.photos[pid] });
+    var b64 = String(body.data || "").replace(/^data:image\/jpeg;base64,/, "");
+    if (!b64 || b64.length > 1800000 || !/^[A-Za-z0-9+\/=]+$/.test(b64)) return json_({ ok: false, error: "Photo too large or invalid." });
+    var blob = Utilities.newBlob(Utilities.base64Decode(b64), "image/jpeg", dayStr_(0) + "_" + tech.name + "_" + pid + ".jpg");
+    var pf = photoFolder_().createFile(blob);
+    h.d.photos[pid] = pf.getId();
+    techSave_(h);
+    return json_({ ok: true, fileId: pf.getId() });
+  }
   if (act === "t_chk_get") {
     var gf = null;
     h.d.forms.forEach(function (f) { if (f.id === body.id && f.techId === tech.id) gf = f; });
@@ -631,6 +729,51 @@ function adminAct_(body) {
     var evs = h.d.events.filter(function (e) { return e.ts >= cut; });
     return json_({ ok: true, version: SCRIPT_VERSION, now: Date.now(), events: evs, tools: toolState_(h.d),
       pins: (main.techs || []).map(function (t) { return { id: t.id, name: t.name, active: t.active !== false, pinSet: !!h.d.pins[t.id] }; }) });
+  }
+  if (act === "a_sd_list") {
+    var sl = h.d.sd, out = Object.keys(sl).map(function (k) { return { site: k, by: sl[k].by, mod: sl[k].mod, n: sl[k].n || 0 }; });
+    return json_({ ok: true, list: out });
+  }
+  if (act === "a_sd_get") {
+    var sg = h.d.sd[cleanStr_(body.site, 120)];
+    return sg ? json_({ ok: true, rec: sg }) : json_({ ok: false, error: "No data for this site." });
+  }
+  if (act === "a_sd_del") {
+    delete h.d.sd[cleanStr_(body.site, 120)];
+    techSave_(h);
+    return json_({ ok: true });
+  }
+  if (act === "a_mrls") {
+    return json_({ ok: true, list: h.d.mrls.slice(-300).reverse().map(mrlSum_) });
+  }
+  if (act === "a_mrl_get") {
+    var am = null;
+    h.d.mrls.forEach(function (f) { if (f.id === body.id) am = f; });
+    return am ? json_({ ok: true, form: am }) : json_({ ok: false, error: "List not found." });
+  }
+  if (act === "a_mrl_reopen") {
+    var rm = null;
+    h.d.mrls.forEach(function (f) { if (f.id === body.id) rm = f; });
+    if (!rm) return json_({ ok: false, error: "List not found." });
+    rm.status = "draft"; rm.mod = Date.now();
+    techSave_(h);
+    return json_({ ok: true });
+  }
+  if (act === "a_mrl_del") {
+    h.d.mrls = h.d.mrls.filter(function (f) { return f.id !== body.id; });
+    techSave_(h);
+    return json_({ ok: true });
+  }
+  if (act === "a_photo") {
+    var fid = String(body.id || "");
+    if (!/^[A-Za-z0-9_-]{10,60}$/.test(fid)) return json_({ ok: false, error: "Bad photo id." });
+    var known = false;
+    Object.keys(h.d.photos).forEach(function (k) { if (h.d.photos[k] === fid) known = true; });
+    if (!known) return json_({ ok: false, error: "Unknown photo." });
+    try {
+      var bl = DriveApp.getFileById(fid).getBlob();
+      return json_({ ok: true, data: "data:image/jpeg;base64," + Utilities.base64Encode(bl.getBytes()) });
+    } catch (err) { return json_({ ok: false, error: "Photo not found in Drive." }); }
   }
   if (act === "a_tpls") {
     return json_({ ok: true, tpls: h.d.tpls });

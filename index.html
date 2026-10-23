@@ -752,7 +752,7 @@ function syncModal(){
   if(d)d.onclick=function(){SYNC.url="";SYNC.key="";SYNC.last=0;syncCfgSave();closeModal();commit("Sync switched off");};}
 
 /* ================= technician access (admin side) ================= */
-var TECHD={events:[],tools:[],pins:[],tpls:[],forms:[],now:0,err:"",loaded:0,busy:false};
+var TECHD={events:[],tools:[],pins:[],tpls:[],forms:[],sd:[],mrls:[],now:0,err:"",loaded:0,busy:false};
 function techApplied(){try{return JSON.parse(localStorage.getItem("gssc-tech-applied")||"[]");}catch(e){return [];}}
 function techAppliedSave(a){try{localStorage.setItem("gssc-tech-applied",JSON.stringify(a.slice(-800)));}catch(e){}}
 function techPost(body){
@@ -779,6 +779,8 @@ function techFetch(loud){
     var n=techApply();
     techBadge();
     techPost({action:"a_forms"}).then(function(x){if(x&&x.ok){TECHD.forms=x.forms||[];TECHD.tpls=x.tpls||[];if(tab==="tech")render();}}).catch(function(){});
+    techPost({action:"a_sd_list"}).then(function(x){if(x&&x.ok){TECHD.sd=x.list||[];if(tab==="tech")render();}}).catch(function(){});
+    techPost({action:"a_mrls"}).then(function(x){if(x&&x.ok){TECHD.mrls=x.list||[];if(tab==="tech")render();}}).catch(function(){});
     if(tab==="tech")render();
     if(loud&&!n)toast("Technician updates are up to date");
     return true;
@@ -905,6 +907,27 @@ function viewTech(){
   else{
     h+='<div class="body"><input type="search" id="cfQ" placeholder="Search site or technician" value="'+esc(CFQ)+'"></div><div class="body flush"><div class="tbl-wrap"><table class="rsp"><thead><tr><th>Date</th><th>Site</th><th>Checklist</th><th>Technician</th><th>Status</th><th></th></tr></thead><tbody id="cfBody">'+cfRows()+'</tbody></table></div></div></div>';}
 
+  // site data forms
+  h+='<div class="card"><h2>Site data forms <span class="count">'+TECHD.sd.length+' site(s)</span></h2>';
+  if(!TECHD.sd.length)h+='<div class="empty"><b>No site data yet</b>Technicians fill the AMC site data form once for each site. It is saved here.</div>';
+  else{
+    h+='<div class="body flush"><div class="tbl-wrap"><table class="rsp"><thead><tr><th>Site</th><th>Fields filled</th><th>Last saved by</th><th>When</th><th></th></tr></thead><tbody>';
+    TECHD.sd.slice().sort(function(a,b){return a.site<b.site?-1:1;}).forEach(function(r){
+      h+='<tr><td data-l="Site"><b>'+esc(r.site)+'</b></td><td data-l="Filled" class="num">'+r.n+'</td><td data-l="By">'+esc(r.by)+'</td><td data-l="When">'+esc(techClock(r.mod))+'</td>'
+        +'<td data-l=""><button class="link" data-sdopen="'+esc(r.site)+'">View / print</button> <button class="link" data-sddel="'+esc(r.site)+'">Delete</button></td></tr>';});
+    h+='</tbody></table></div></div>';}
+  h+='<div style="padding:10px 14px"><button class="btn ghost" id="sdBlank">Print blank form</button></div></div>';
+  // material lists
+  h+='<div class="card"><h2>Material lists for quotation <span class="count">'+TECHD.mrls.length+'</span></h2>';
+  if(!TECHD.mrls.length)h+='<div class="empty"><b>Nothing yet</b>Item lists with photos sent by technicians after service appear here.</div></div>';
+  else{
+    h+='<div class="body flush"><div class="tbl-wrap"><table class="rsp"><thead><tr><th>Date</th><th>Site</th><th>Technician</th><th>Items</th><th>Status</th><th></th></tr></thead><tbody>';
+    TECHD.mrls.forEach(function(m){
+      h+='<tr><td data-l="Date" class="num">'+esc(m.date)+'</td><td data-l="Site"><b>'+esc(m.site)+'</b></td><td data-l="Technician">'+esc(m.tech)+'</td><td data-l="Items" class="num">'+m.n+'</td>'
+        +'<td data-l="Status"><span class="pill'+(m.status==="final"?' ok':'')+'">'+(m.status==="final"?"Submitted":"Draft")+'</span></td>'
+        +'<td data-l=""><button class="link" data-mropen="'+esc(m.id)+'">View / print</button>'+(m.status==="final"?' <button class="link" data-mrreopen="'+esc(m.id)+'">Reopen</button>':'')+' <button class="link" data-mrdel="'+esc(m.id)+'">Delete</button></td></tr>';});
+    h+='</tbody></table></div></div></div>';}
+
   // tools
   h+='<div class="card"><h2>Tools <span class="count">'+TECHD.tools.length+'</span></h2><div class="body flush"><div class="tbl-wrap"><table class="rsp"><thead><tr>'
     +'<th>Tool</th><th>Status</th><th>Since</th><th>Site</th><th></th></tr></thead><tbody>';
@@ -977,6 +1000,28 @@ function techWire(){
   q("[data-cdel]",function(x){x.onclick=function(){
     if(!confirm("Delete this checklist? Already filled checklists stay saved."))return;
     techPost({action:"a_tpl_del",id:x.dataset.cdel}).then(function(r){if(r&&r.ok){TECHD.tpls=r.tpls;render();}else toast((r&&r.error)||"Failed");});};});
+  b=document.getElementById("sdBlank");if(b)b.onclick=function(){loadSdSchema().then(function(sch){printWin(sdPrintHtml(sch,"",{}));}).catch(function(){toast("Form file not found");});};
+  q("[data-sdopen]",function(x){x.onclick=function(){
+    Promise.all([loadSdSchema(),techPost({action:"a_sd_get",site:x.dataset.sdopen})]).then(function(a){
+      if(!a[1]||!a[1].ok)return toast((a[1]&&a[1].error)||"Failed");
+      printWin(sdPrintHtml(a[0],x.dataset.sdopen,a[1].rec.data));}).catch(function(){toast("Could not open");});};});
+  q("[data-sddel]",function(x){x.onclick=function(){
+    if(!confirm("Delete the saved site data for "+x.dataset.sddel+"?"))return;
+    techPost({action:"a_sd_del",site:x.dataset.sddel}).then(function(r){if(r&&r.ok){toast("Deleted");techFetch(false);}else toast((r&&r.error)||"Failed");});};});
+  q("[data-mropen]",function(x){x.onclick=function(){
+    techPost({action:"a_mrl_get",id:x.dataset.mropen}).then(function(r){
+      if(!r||!r.ok)return toast((r&&r.error)||"Failed");
+      var ids=[];(r.form.items||[]).forEach(function(it){(it.ph||[]).forEach(function(id){ids.push(id);});});
+      toast(ids.length?"Loading "+ids.length+" photo(s)\u2026":"Opening\u2026");
+      var map={};
+      return Promise.all(ids.map(function(id){return techPost({action:"a_photo",id:id}).then(function(p){if(p&&p.ok)map[id]=p.data;}).catch(function(){});}))
+        .then(function(){printWin(mrPrintHtml(r.form,map));});}).catch(function(){toast("Could not open");});};});
+  q("[data-mrreopen]",function(x){x.onclick=function(){
+    if(!confirm("Reopen this list so the technician can edit it?"))return;
+    techPost({action:"a_mrl_reopen",id:x.dataset.mrreopen}).then(function(r){if(r&&r.ok){toast("Reopened");techFetch(false);}else toast((r&&r.error)||"Failed");});};});
+  q("[data-mrdel]",function(x){x.onclick=function(){
+    if(!confirm("Delete this material list for good?"))return;
+    techPost({action:"a_mrl_del",id:x.dataset.mrdel}).then(function(r){if(r&&r.ok){toast("Deleted");techFetch(false);}else toast((r&&r.error)||"Failed");});};});
   b=document.getElementById("cfQ");if(b)b.oninput=function(){CFQ=b.value;document.getElementById("cfBody").innerHTML=cfRows();techWireForms();};
   techWireForms();
   var pl=techPending();
@@ -992,6 +1037,80 @@ function techWire(){
     if(!confirm("Remove this PIN? The technician will not be able to log in."))return;
     techPost({action:"a_clearpin",techId:x.dataset.tpinx}).then(function(r){
       if(r&&r.ok){toast("PIN removed");techFetch(false);}else toast((r&&r.error)||"Failed");});};});}
+
+/* ---- printing the site data form and the material list ---- */
+var SDSCH=null;
+function loadSdSchema(){
+  if(SDSCH)return Promise.resolve(SDSCH);
+  return fetch("sitedata.json?"+Date.now()).then(function(r){return r.json();}).then(function(j){SDSCH=j;return j;});
+}
+function sdPrintHtml(sch,site,data){
+  var E=esc,D=data||{};
+  var h='<!doctype html><html><head><meta charset="utf-8"><title>'+E(sch.title)+(site?' - '+E(site):'')+'</title><style>'
+    +'@page{size:A4 portrait;margin:12mm 10mm 16mm;@bottom-center{content:"Gulf Safety & Security Co. Ltd. (GSSC)  |  AMC Site System Data Form  |  Page " counter(page) " of " counter(pages);font:9px Arial}}'
+    +'*{box-sizing:border-box}body{font:10.5px Arial,sans-serif;color:#111;margin:0}.top{background:#1F3864;color:#fff;padding:10px 14px;font-size:16px;font-weight:bold}'
+    +'h3{margin:14px 0 4px;background:#1F3864;color:#fff;padding:5px 8px;font-size:12px;page-break-after:avoid}h4{margin:8px 0 3px;font-size:11px;color:#1F3864;page-break-after:avoid}'
+    +'table{border-collapse:collapse;width:100%;margin-bottom:6px}td,th{border:1px solid #777;padding:4px 5px;vertical-align:top;height:8mm}th{background:#E9EEF7;font-size:9px;text-transform:uppercase}td.l{background:#F3F5F9;font-weight:bold;width:21%}'
+    +'tr{page-break-inside:avoid}.bar{position:fixed;top:6px;right:8px}@media print{.bar{display:none}}'
+    +'</style></head><body><div class="bar"><button style="padding:8px 14px;font-size:14px" onclick="window.print()">Print / Save PDF</button></div>'
+    +'<div class="top">'+E(sch.title)+(site?' — '+E(site):'')+'</div>';
+  sch.sections.forEach(function(sc,si){
+    h+='<h3>'+E(sc.t)+'</h3>';
+    sc.blocks.forEach(function(b,bi){
+      if(b.sub)h+='<h4>'+E(b.sub)+'</h4>';
+      if(b.kind==="fields"){
+        h+='<table>';
+        for(var i=0;i<b.fields.length;i+=2){
+          h+='<tr>';[b.fields[i],b.fields[i+1]].forEach(function(f){h+=f?'<td class="l">'+E(f.l)+'</td><td>'+E(D[f.k]||"")+'</td>':'<td class="l"></td><td></td>';});
+          h+='</tr>';}
+        h+='</table>';
+      }else{
+        var rows=b.lab?b.rows.length:b.n;
+        h+='<table><thead><tr>'+b.cols.map(function(c){return '<th>'+E(c)+'</th>';}).join("")+'</tr></thead><tbody>';
+        for(var ri=0;ri<rows;ri++){
+          h+='<tr>'+b.cols.map(function(c,ci){
+            if(b.lab&&ci===0)return '<td class="l">'+E(b.rows[ri])+'</td>';
+            return '<td>'+E(D["s"+si+"b"+bi+"r"+ri+"c"+ci]||"")+'</td>';}).join("")+'</tr>';}
+        h+='</tbody></table>';}});});
+  return h+'</body></html>';}
+function mrPrintHtml(f,photos){
+  var E=esc,H=f.hdr||{};
+  var h='<!doctype html><html><head><meta charset="utf-8"><title>Material list - '+E(f.site)+' '+E(f.date)+'</title><style>'
+    +'@page{size:A4 portrait;margin:12mm 10mm 16mm;@bottom-center{content:"GULF SAFETY & SECURITY CO. LTD.  |  Material Requirement List — For Quotation  |  Form: GSSC-F-MRL-01   Page " counter(page) " of " counter(pages);font:8.5px Arial}}'
+    +'*{box-sizing:border-box}body{font:11px Arial,sans-serif;color:#111;margin:0}.top{background:#1F3864;color:#fff;padding:10px 14px}.top b{font-size:15px;display:block}'
+    +'h3{margin:12px 0 4px;background:#E9EEF7;color:#1F3864;padding:5px 8px;font-size:12px;page-break-after:avoid}'
+    +'table{border-collapse:collapse;width:100%;margin-bottom:6px}td,th{border:1px solid #777;padding:5px 6px;vertical-align:top}th{background:#E9EEF7;font-size:9.5px;text-transform:uppercase}'
+    +'td.l{background:#F3F5F9;font-weight:bold;width:20%}.it td{height:11mm}tr{page-break-inside:avoid}.ph{display:flex;flex-wrap:wrap;gap:8px}.ph div{width:48%;font-size:10px}.ph img{width:100%;border:1px solid #777}'
+    +'.bar{position:fixed;top:6px;right:8px}@media print{.bar{display:none}}.pb{page-break-before:always}'
+    +'</style></head><body><div class="bar"><button style="padding:8px 14px;font-size:14px" onclick="window.print()">Print / Save PDF</button></div>'
+    +'<div class="top"><b>MATERIAL REQUIREMENT LIST</b>After service completion — for quotation purpose · Gulf Safety &amp; Security Co. Ltd. (GSSC)</div>'
+    +'<h3>1. SERVICE DETAILS</h3><table>'
+    +'<tr><td class="l">Client / facility</td><td>'+E(H.client||f.site)+'</td><td class="l">Location / area</td><td>'+E(H.loc||"")+'</td></tr>'
+    +'<tr><td class="l">Report number</td><td>'+E(H.rep||"")+'</td><td class="l">AMC number</td><td>'+E(H.amc||"")+'</td></tr>'
+    +'<tr><td class="l">Date of service</td><td>'+E(f.date)+'</td><td class="l">Service no. / visit</td><td>'+E(H.svcno||"")+'</td></tr>'
+    +'<tr><td class="l">System serviced</td><td>'+E(H.sys||"")+'</td><td class="l">Service technician</td><td>'+E(H.tech||f.tech)+'</td></tr>'
+    +'<tr><td class="l">Site supervisor</td><td>'+E(H.sup||"")+'</td><td class="l">Date of submission</td><td>'+E(H.sub||"")+'</td></tr></table>'
+    +'<h3>2. MATERIALS / ITEMS REQUIRED — FOR OFFICE PURCHASE / QUOTATION</h3>'
+    +'<table><thead><tr><th style="width:6mm">#</th><th>Description of material / item required</th><th>Model / size / brand</th><th style="width:14mm">Unit</th><th style="width:14mm">Qty</th><th>Remarks / required for</th><th style="width:16mm">Photos</th></tr></thead><tbody>';
+  var items=f.items||[],n=Math.max(items.length,14);
+  for(var i=0;i<n;i++){var it=items[i]||{};
+    h+='<tr class="it"><td>'+(it.d?(i+1):"")+'</td><td>'+E(it.d||"")+'</td><td>'+E(it.m||"")+'</td><td>'+E(it.u||"")+'</td><td>'+E(it.q||"")+'</td><td>'+E(it.r||"")+'</td><td>'+((it.ph&&it.ph.length)?it.ph.length+' (see photos)':'')+'</td></tr>';}
+  h+='</tbody></table><h3>3. SIGN-OFF</h3><table><thead><tr><th>Role</th><th>Printed name</th><th>Signature</th><th>Date</th></tr></thead><tbody>'
+    +'<tr class="it"><td>Prepared by — GSSC Site Supervisor</td><td>'+E(H.sup||"")+'</td><td></td><td></td></tr>'
+    +'<tr class="it"><td>Received by — Office</td><td></td><td></td><td></td></tr></tbody></table>'
+    +'<p>Submitted by: <b>Sanoop Parakulathil Antony</b> | Technical Supervisor</p>';
+  var any=items.some(function(it){return it.ph&&it.ph.length;});
+  if(any){
+    h+='<div class="pb"></div><h3>PHOTOGRAPHS — '+E(f.site)+' · '+E(f.date)+'</h3>';
+    items.forEach(function(it,i){
+      if(!it.ph||!it.ph.length)return;
+      h+='<h4 style="margin:10px 0 4px;page-break-after:avoid">Item '+(i+1)+': '+E(it.d)+(it.m?' — '+E(it.m):'')+'</h4><div class="ph">'
+        +it.ph.map(function(id){return '<div>'+(photos&&photos[id]?'<img src="'+photos[id]+'">':'<i>photo not available</i>')+'</div>';}).join("")+'</div>';});}
+  return h+'</body></html>';}
+function printWin(html){
+  var w=window.open("","_blank");
+  if(!w){toast("Allow pop-ups to print");return;}
+  w.document.open();w.document.write(html);w.document.close();}
 
 function techWireForms(){
   var v=document.getElementById("view");

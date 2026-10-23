@@ -1,5 +1,5 @@
-const CACHE = "gssc-tracker-v27";
-const ASSETS = ["./","./index.html","./manifest.webmanifest","./icon-192.png","./icon-512.png","./tech.html","./tech.webmanifest"];
+const CACHE = "gssc-tracker-v28";
+const ASSETS = ["./","./index.html","./manifest.webmanifest","./icon-192.png","./icon-512.png","./tech.html","./tech.webmanifest","./sitedata.json"];
 self.addEventListener("install", e => {
   self.skipWaiting();
   e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).catch(() => {}));
