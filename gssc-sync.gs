@@ -28,7 +28,7 @@ var CLAUDE_MODEL = "claude-sonnet-5";
 
 /* Bump this whenever you paste in a new copy of the script. The app can read it
    back, so you can tell at a glance whether your deployment is up to date. */
-var SCRIPT_VERSION = "2026-08-29-c";
+var SCRIPT_VERSION = "2026-10-23-tech";
 
 var FILE_NAME = "gssc-tracker-data.json";
 
@@ -183,6 +183,288 @@ function claudeLook_(body) {
   return json_(r);
 }
 
+
+/* ===============================================================
+   TECHNICIAN ACCESS
+   Technicians never get the secret KEY. They log in with their name
+   and a PIN that only you set. The script gives them four things only:
+   see their own jobs, start / complete a job (JCC number compulsory),
+   take out / return a tool, and see who holds each tool.
+   Their updates go in a separate file (gssc-tech-data.json), so they can
+   never overwrite your AMC / GMC lists.
+   =============================================================== */
+var TECH_FILE = "gssc-tech-data.json";
+var DEFAULT_TOOLS = ["Smoke Test Kit"];
+var MAX_FAILS = 5;
+var LOCK_MIN = 15;
+var TZ = "Asia/Riyadh";
+
+function newId_() { return Utilities.getUuid().replace(/-/g, "").slice(0, 8); }
+
+function techLoad_() {
+  var it = DriveApp.getFilesByName(TECH_FILE), f = null;
+  while (it.hasNext()) { var c = it.next(); if (!c.isTrashed()) { f = c; break; } }
+  var d = null;
+  if (f) { try { d = JSON.parse(f.getBlob().getDataAsString() || "{}"); } catch (err) { d = null; } }
+  if (!d || typeof d !== "object") d = {};
+  if (!d.pins) d.pins = {};
+  if (!d.events) d.events = [];
+  if (!d.tools || !d.tools.length) {
+    d.tools = DEFAULT_TOOLS.map(function (n) { return { id: newId_(), name: n }; });
+  }
+  if (!f) f = DriveApp.createFile(TECH_FILE, JSON.stringify(d), MimeType.PLAIN_TEXT);
+  return { f: f, d: d };
+}
+
+function techSave_(h) {
+  var cut = Date.now() - 120 * 864e5;
+  h.d.events = h.d.events.filter(function (e) { return e.ts >= cut; });
+  if (h.d.events.length > 4000) h.d.events = h.d.events.slice(-4000);
+  h.f.setContent(JSON.stringify(h.d));
+}
+
+function mainData_() {
+  try {
+    var o = JSON.parse(getFile_().getBlob().getDataAsString() || "{}");
+    return o.data || {};
+  } catch (err) { return {}; }
+}
+
+function dayStr_(offset) {
+  return Utilities.formatDate(new Date(Date.now() + (offset || 0) * 864e5), TZ, "yyyy-MM-dd");
+}
+
+function hashPin_(salt, pin) {
+  var raw = Utilities.computeDigest(Utilities.DigestAlgorithm.SHA_256, salt + ":" + pin);
+  return raw.map(function (b) { return ("0" + (b < 0 ? b + 256 : b).toString(16)).slice(-2); }).join("");
+}
+
+function findTech_(main, name) {
+  var n = String(name || "").trim().toLowerCase();
+  if (!n) return null;
+  var list = main.techs || [];
+  for (var i = 0; i < list.length; i++) {
+    if (list[i].active !== false && String(list[i].name || "").trim().toLowerCase() === n) return list[i];
+  }
+  return null;
+}
+
+/* returns {tech} when name + PIN are right, otherwise {error} */
+function techAuth_(body, h, main) {
+  var tech = findTech_(main, body.tech);
+  if (!tech) return { error: "Name not found. Ask your supervisor." };
+  var cache = CacheService.getScriptCache();
+  var fk = "tf_" + tech.id;
+  var n = Number(cache.get(fk) || 0);
+  if (n >= MAX_FAILS) return { error: "Too many wrong PINs. Try again in " + LOCK_MIN + " minutes." };
+  var p = h.d.pins[tech.id];
+  if (!p) return { error: "No PIN set for you yet. Ask your supervisor." };
+  if (hashPin_(p.salt, String(body.pin || "")) !== p.hash) {
+    cache.put(fk, String(n + 1), LOCK_MIN * 60);
+    return { error: "Wrong PIN. " + (MAX_FAILS - n - 1) + " tries left." };
+  }
+  cache.remove(fk);
+  return { tech: tech };
+}
+
+/* who holds each tool right now, worked out from the event log */
+function toolState_(d) {
+  var held = {};
+  d.events.forEach(function (e) {
+    if (e.kind !== "tool") return;
+    if (e.act === "out") held[e.toolId] = { techId: e.techId, tech: e.tech, since: e.ts, site: e.site || "" };
+    else if (e.act === "return") delete held[e.toolId];
+  });
+  return d.tools.map(function (t) {
+    var h = held[t.id];
+    return { id: t.id, name: t.name, holder: h ? h.tech : "", holderId: h ? h.techId : "",
+             since: h ? h.since : 0, site: h ? h.site : "" };
+  });
+}
+
+/* latest job event for each duty */
+function jobStatus_(d) {
+  var m = {};
+  d.events.forEach(function (e) {
+    if (e.kind !== "job" || !e.dutyId) return;
+    var k = e.dutyId + "|" + e.techId;
+    var cur = m[k] || { status: "Pending", jcc: "", sr: "", started: 0, done: 0 };
+    if (e.act === "start") { if (cur.status === "Pending") cur.status = "In Progress"; cur.started = e.ts; }
+    if (e.act === "complete") { cur.status = "Completed"; cur.jcc = e.jcc || ""; cur.sr = e.sr || ""; cur.done = e.ts; }
+    m[k] = cur;
+  });
+  return m;
+}
+
+function scopeItems_(txt) {
+  return String(txt || "").split(/\r?\n|;/).map(function (x) { return x.trim(); })
+    .filter(function (x) { return x; }).slice(0, 40);
+}
+
+function jobInfo_(main, duty) {
+  var out = { info: "", items: [] };
+  var ref = String(duty.ref || "");
+  var bar = ref.indexOf("|");
+  if (bar < 0) return out;
+  var kind = ref.slice(0, bar), id = ref.slice(bar + 1), i;
+  if (kind === "gmc") {
+    var G = main.gmc || [];
+    for (i = 0; i < G.length; i++) if (G[i].id === id) {
+      out.info = "GMC " + (G[i].gmcNo || "") + " · " + (G[i].client || "") + (G[i].desc ? " — " + G[i].desc : "");
+      out.items = scopeItems_(G[i].scope);
+    }
+  } else if (kind === "amc") {
+    var A = main.amc || [];
+    for (i = 0; i < A.length; i++) if (A[i].id === id) {
+      out.info = "AMC " + (A[i].amcNo || "") + " · " + (A[i].site || "") + (A[i].serviceNo ? " (" + A[i].serviceNo + ")" : "")
+        + (A[i].system ? " · " + A[i].system : "");
+    }
+  } else if (kind === "call") {
+    var C = main.oncall || [];
+    for (i = 0; i < C.length; i++) if (C[i].id === id) out.info = "CALL · " + (C[i].client || "") + (C[i].issue ? " — " + C[i].issue : "");
+  }
+  return out;
+}
+
+function techState_(tech, h, main) {
+  var from = dayStr_(-3), to = dayStr_(1);
+  var st = jobStatus_(h.d);
+  var jobs = (main.duties || []).filter(function (x) {
+    return x.date >= from && x.date <= to && (x.techIds || []).indexOf(tech.id) > -1;
+  }).map(function (x) {
+    var s = st[x.id + "|" + tech.id] || { status: "Pending", jcc: "", sr: "" };
+    var inf = jobInfo_(main, x);
+    return { id: x.id, date: x.date, site: x.siteText || "", activity: x.activity || "", location: x.location || "",
+             remarks: x.remarks || "", ref: x.ref || "", info: inf.info, items: inf.items,
+             status: s.status, jcc: s.jcc, sr: s.sr };
+  }).sort(function (a, b) { return a.date < b.date ? 1 : (a.date > b.date ? -1 : 0); });
+  var mine = h.d.events.filter(function (e) { return e.techId === tech.id && e.ts > Date.now() - 31 * 864e5; })
+    .slice(-60).reverse();
+  return { ok: true, tech: tech.name, today: dayStr_(0), jobs: jobs, tools: toolState_(h.d), history: mine,
+           sites: siteNames_(main) };
+}
+
+function siteNames_(main) {
+  var seen = {}, out = [];
+  (main.contracts || []).forEach(function (c) {
+    var n = String(c.site || "").trim();
+    if (n && !seen[n]) { seen[n] = 1; out.push(n); }
+  });
+  return out.sort().slice(0, 150);
+}
+
+function techAct_(body) {
+  var h = techLoad_(), main = mainData_();
+  var act = body.action;
+  if (act === "t_names") {
+    return json_({ ok: true, names: (main.techs || []).filter(function (t) { return t.active !== false && h.d.pins[t.id]; })
+      .map(function (t) { return t.name; }) });
+  }
+  var au = techAuth_(body, h, main);
+  if (au.error) return json_({ ok: false, error: au.error });
+  var tech = au.tech;
+  if (act === "t_state") return json_(techState_(tech, h, main));
+
+  var ev = body.ev || {};
+  var id = String(ev.id || "");
+  if (!id) return json_({ ok: false, error: "no event id" });
+  var dup = h.d.events.some(function (e) { return e.id === id; });
+  if (dup) return json_(techState_(tech, h, main));
+
+  var rec = { id: id, ts: Date.now(), clientTs: Number(ev.clientTs) || 0, techId: tech.id, tech: tech.name };
+  if (act === "t_job") {
+    if (ev.act !== "start" && ev.act !== "complete") return json_({ ok: false, error: "bad job action" });
+    rec.kind = "job"; rec.act = ev.act;
+    rec.dutyId = String(ev.dutyId || ""); rec.ref = String(ev.ref || ""); rec.site = String(ev.site || "").slice(0, 120);
+    if (!rec.dutyId) return json_({ ok: false, error: "no job" });
+    if (ev.act === "complete") {
+      rec.jcc = String(ev.jcc || "").trim().slice(0, 40);
+      if (!rec.jcc) return json_({ ok: false, error: "JCC number is compulsory to complete a job." });
+      rec.sr = String(ev.sr || "").trim().slice(0, 40);
+      rec.remarks = String(ev.remarks || "").slice(0, 500);
+      if (ev.items) rec.items = { done: Number(ev.items.done) || 0, total: Number(ev.items.total) || 0 };
+    }
+  } else if (act === "t_tool") {
+    if (ev.act !== "out" && ev.act !== "return") return json_({ ok: false, error: "bad tool action" });
+    var tools = toolState_(h.d), t = null;
+    tools.forEach(function (x) { if (x.id === ev.toolId) t = x; });
+    if (!t) return json_({ ok: false, error: "Unknown tool." });
+    if (ev.act === "out") {
+      if (t.holder && t.holderId !== tech.id) return json_({ ok: false, error: t.name + " is with " + t.holder + " now." });
+      if (t.holderId === tech.id) return json_(techState_(tech, h, main));
+    } else {
+      if (!t.holder) return json_(techState_(tech, h, main));
+      if (t.holderId !== tech.id) return json_({ ok: false, error: t.name + " is with " + t.holder + ". Only they or your supervisor can return it." });
+    }
+    rec.kind = "tool"; rec.act = ev.act; rec.toolId = t.id; rec.tool = t.name;
+    rec.site = String(ev.site || "").slice(0, 120);
+    rec.cond = ev.act === "return" ? (ev.cond === "Damaged" ? "Damaged" : "OK") : "";
+    rec.note = String(ev.note || "").slice(0, 300);
+  } else {
+    return json_({ ok: false, error: "unknown action" });
+  }
+  h.d.events.push(rec);
+  techSave_(h);
+  return json_(techState_(tech, h, main));
+}
+
+/* admin side — needs the secret KEY, same as the rest of the app */
+function adminAct_(body) {
+  var h = techLoad_(), main = mainData_(), act = body.action;
+  if (act === "a_events") {
+    var cut = Date.now() - 45 * 864e5;
+    var evs = h.d.events.filter(function (e) { return e.ts >= cut; });
+    return json_({ ok: true, version: SCRIPT_VERSION, now: Date.now(), events: evs, tools: toolState_(h.d),
+      pins: (main.techs || []).map(function (t) { return { id: t.id, name: t.name, active: t.active !== false, pinSet: !!h.d.pins[t.id] }; }) });
+  }
+  if (act === "a_setpin") {
+    var pin = String(body.pin || "");
+    if (!/^[0-9]{4,8}$/.test(pin)) return json_({ ok: false, error: "PIN must be 4 to 8 digits." });
+    var known = (main.techs || []).some(function (t) { return t.id === body.techId; });
+    if (!known) return json_({ ok: false, error: "Technician not found." });
+    var salt = newId_() + newId_();
+    h.d.pins[body.techId] = { salt: salt, hash: hashPin_(salt, pin) };
+    CacheService.getScriptCache().remove("tf_" + body.techId);
+    techSave_(h);
+    return json_({ ok: true });
+  }
+  if (act === "a_clearpin") {
+    delete h.d.pins[body.techId];
+    techSave_(h);
+    return json_({ ok: true });
+  }
+  if (act === "a_tools") {
+    var names = (body.names || []).map(function (x) { return String(x).trim(); }).filter(function (x) { return x; });
+    if (!names.length) return json_({ ok: false, error: "Keep at least one tool." });
+    var state = toolState_(h.d), heldNames = {};
+    state.forEach(function (t) { if (t.holder) heldNames[t.name.toLowerCase()] = t.holder; });
+    var keep = {};
+    var next = names.map(function (n) {
+      var ex = null;
+      h.d.tools.forEach(function (t) { if (t.name.toLowerCase() === n.toLowerCase()) ex = t; });
+      if (ex) { keep[ex.id] = 1; return { id: ex.id, name: n }; }
+      return { id: newId_(), name: n };
+    });
+    var blocked = h.d.tools.filter(function (t) { return !keep[t.id] && heldNames[t.name.toLowerCase()]; });
+    if (blocked.length) return json_({ ok: false, error: blocked[0].name + " is still with " + heldNames[blocked[0].name.toLowerCase()] + ". Return it first." });
+    h.d.tools = next;
+    techSave_(h);
+    return json_({ ok: true });
+  }
+  if (act === "a_return") {
+    var tl = toolState_(h.d), tt = null;
+    tl.forEach(function (x) { if (x.id === body.toolId) tt = x; });
+    if (!tt) return json_({ ok: false, error: "Unknown tool." });
+    if (tt.holder) {
+      h.d.events.push({ id: "adm" + newId_(), ts: Date.now(), clientTs: 0, techId: "admin", tech: "Supervisor", kind: "tool",
+        act: "return", toolId: tt.id, tool: tt.name, site: "", cond: "OK", note: "Returned by supervisor (was with " + tt.holder + ")" });
+      techSave_(h);
+    }
+    return json_({ ok: true });
+  }
+  return json_({ ok: false, error: "unknown action" });
+}
+
 /* the app writes the shared list back */
 function doPost(e) {
   var lock = LockService.getScriptLock();
@@ -190,8 +472,15 @@ function doPost(e) {
     lock.waitLock(20000);
     var body = {};
     try { body = JSON.parse(e.postData.contents); } catch (err) {}
+    var act0 = String(body.action || "");
+    if (act0.indexOf("t_") === 0) {
+      return techAct_(body);
+    }
     if (String(body.key || "") !== KEY) {
       return json_({ ok: false, error: "wrong key" });
+    }
+    if (act0.indexOf("a_") === 0) {
+      return adminAct_(body);
     }
     if (body.action === "file") {
       return saveFile_(body);

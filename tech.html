@@ -1,0 +1,318 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="theme-color" content="#1F3864">
+<link rel="manifest" href="tech.webmanifest">
+<link rel="icon" href="icon-192.png">
+<link rel="apple-touch-icon" href="icon-192.png">
+<title>GSSC Technician</title>
+<style>
+:root{--navy:#1F3864;--bg:#F4F6FA;--card:#fff;--line:#D9DFEA;--ink:#17202E;--mute:#5B6678;
+  --ok:#1E8E3E;--okbg:#E6F4EA;--warn:#B26A00;--warnbg:#FFF4E0;--bad:#C5221F;--badbg:#FCE8E6;--blue:#1A56DB;--bluebg:#E8F0FE}
+*{box-sizing:border-box}
+html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,Arial,sans-serif}
+header{background:var(--navy);color:#fff;padding:12px 16px;padding-top:max(12px,env(safe-area-inset-top));display:flex;align-items:center;gap:10px}
+header h1{font-size:17px;margin:0;flex:1}
+header small{display:block;font-weight:400;opacity:.8;font-size:12px}
+header button{background:rgba(255,255,255,.15);color:#fff;border:0;border-radius:8px;padding:8px 12px;font-size:14px}
+nav{display:flex;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
+nav button{flex:1;padding:14px 4px;border:0;background:none;font-size:15px;color:var(--mute);border-bottom:3px solid transparent}
+nav button[aria-selected=true]{color:var(--navy);border-bottom-color:var(--navy);font-weight:600}
+main{padding:14px 16px 90px;max-width:640px;margin:0 auto}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
+.card h3{margin:0 0 4px;font-size:16px}
+.sub{color:var(--mute);font-size:14px}
+.pill{display:inline-block;border-radius:99px;padding:3px 10px;font-size:13px;font-weight:600}
+.p-Pending{background:#EEF1F6;color:var(--mute)}
+.p-In{background:var(--bluebg);color:var(--blue)}
+.p-Completed,.p-ok{background:var(--okbg);color:var(--ok)}
+.p-out{background:var(--warnbg);color:var(--warn)}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}
+.btn{border:0;border-radius:10px;padding:14px 18px;font-size:16px;font-weight:600;background:var(--navy);color:#fff;min-height:48px}
+.btn.sec{background:#fff;color:var(--navy);border:1.5px solid var(--navy)}
+.btn.go{background:var(--ok)}
+.btn.wide{width:100%}
+.btn[disabled]{opacity:.5}
+label{display:block;font-size:14px;color:var(--mute);margin:12px 0 4px}
+input,select,textarea{width:100%;font-size:17px;padding:13px;border:1.5px solid var(--line);border-radius:10px;background:#fff;color:var(--ink)}
+textarea{min-height:80px;font-family:inherit}
+.banner{border-radius:10px;padding:12px 14px;margin-bottom:12px;font-size:15px}
+.b-warn{background:var(--warnbg);color:var(--warn);border:1px solid #F0D49A}
+.b-bad{background:var(--badbg);color:var(--bad);border:1px solid #F3B9B5}
+.b-info{background:var(--bluebg);color:var(--blue);border:1px solid #BBD0F8}
+.empty{text-align:center;color:var(--mute);padding:30px 10px}
+.modalbg{position:fixed;inset:0;background:rgba(0,0,0,.45);display:flex;align-items:flex-end;justify-content:center;z-index:20}
+.modal{background:#fff;width:100%;max-width:640px;border-radius:16px 16px 0 0;padding:18px 16px;padding-bottom:max(18px,env(safe-area-inset-bottom));max-height:92vh;overflow:auto}
+.modal h2{margin:0 0 4px;font-size:18px}
+.chk{display:flex;gap:10px;align-items:flex-start;padding:10px 0;border-bottom:1px solid var(--line)}
+.chk input{width:24px;height:24px;margin:0;flex:none}
+.hist{padding:10px 0;border-bottom:1px solid var(--line);font-size:15px}
+.hist:last-child{border:0}
+.pend{font-size:12px;color:var(--warn);font-weight:600}
+.center{max-width:420px;margin:40px auto}
+.toast{position:fixed;left:50%;bottom:24px;transform:translateX(-50%);background:#202124;color:#fff;padding:12px 18px;border-radius:10px;font-size:15px;z-index:30;max-width:90%}
+</style>
+</head>
+<body>
+<div id="app"></div>
+<script>
+(function(){
+"use strict";
+var CFG_KEY="gssc-tech-cfg", Q_KEY="gssc-tech-q", S_KEY="gssc-tech-s";
+var cfg={url:"",name:"",pin:"",stay:true};
+var S=null;            // last state from server
+var tab="jobs", busy=false, loginErr="", names=null, online=true, lastSync=0, flushing=false;
+var el=function(id){return document.getElementById(id);};
+var app=el("app");
+
+function esc(s){return String(s==null?"":s).replace(/[&<>"']/g,function(c){return {"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c];});}
+function uid(){return Date.now().toString(36)+Math.random().toString(36).slice(2,9);}
+function lsGet(k,d){try{var v=localStorage.getItem(k);return v?JSON.parse(v):d;}catch(e){return d;}}
+function lsSet(k,v){try{localStorage.setItem(k,JSON.stringify(v));}catch(e){}}
+function queue(){return lsGet(Q_KEY,[]);}
+function setQueue(q){lsSet(Q_KEY,q);}
+function tm(ts){return ts?new Date(ts).toLocaleString("en-GB",{timeZone:"Asia/Riyadh",day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hour12:false}):"";}
+function dshort(d){if(!d)return "";var p=d.split("-");var m=["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];return p[2]+" "+m[+p[1]-1];}
+function toast(m){var o=document.querySelector(".toast");if(o)o.remove();var t=document.createElement("div");t.className="toast";t.textContent=m;document.body.appendChild(t);setTimeout(function(){t.remove();},3500);}
+
+/* ---------- config: address comes from the link (?u=...) once, then is remembered ---------- */
+(function init(){
+  var c=lsGet(CFG_KEY,{});
+  cfg.url=c.url||"";cfg.name=c.name||"";cfg.pin=c.pin||"";cfg.stay=c.stay!==false;
+  try{var u=new URLSearchParams(location.search).get("u");
+    if(u&&/^https:\/\/script\.google\.com\//.test(u)){cfg.url=u;saveCfg();history.replaceState(null,"",location.pathname);}}catch(e){}
+})();
+function saveCfg(){lsSet(CFG_KEY,{url:cfg.url,name:cfg.name,pin:cfg.stay?cfg.pin:"",stay:cfg.stay});}
+
+/* ---------- talking to the script ---------- */
+function post(body){
+  return fetch(cfg.url,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(body)})
+    .then(function(r){return r.json();});
+}
+function auth(extra){var o={tech:cfg.name,pin:cfg.pin};for(var k in extra)o[k]=extra[k];return o;}
+
+function loadNames(){
+  return post({action:"t_names"}).then(function(r){names=r&&r.ok?r.names:[];draw();})
+    .catch(function(){names=[];loginErr="No connection. Check your signal.";draw();});
+}
+
+function refresh(){
+  if(!cfg.name||!cfg.pin)return Promise.resolve();
+  return post(auth({action:"t_state"})).then(function(r){
+    online=true;
+    if(!r||!r.ok){
+      if(r&&/PIN|Name not found|Too many/.test(r.error||"")){cfg.pin="";saveCfg();S=null;loginErr=r.error;draw();return;}
+      throw new Error(r&&r.error||"failed");}
+    S=r;lastSync=Date.now();lsSet(S_KEY,S);draw();
+  }).catch(function(){online=false;draw();});
+}
+
+/* every update waits in a queue on the phone until the server confirms it, so weak signal never loses work */
+function send(action,ev){
+  ev.id=uid();ev.clientTs=Date.now();
+  var q=queue();q.push({action:action,ev:ev});setQueue(q);
+  draw();flush();
+}
+function flush(){
+  if(flushing)return Promise.resolve();
+  var q=queue();if(!q.length)return Promise.resolve();
+  flushing=true;
+  function next(){
+    q=queue();
+    if(!q.length){flushing=false;draw();return refresh();}
+    var it=q[0];
+    return post(auth({action:it.action,ev:it.ev})).then(function(r){
+      online=true;
+      if(r&&r.ok){q=queue();q.shift();setQueue(q);S=r;lastSync=Date.now();lsSet(S_KEY,S);draw();return next();}
+      // server refused this update (for example tool already taken): drop it and tell the technician
+      q=queue();q.shift();setQueue(q);toast(r&&r.error?r.error:"Update refused");return next();
+    }).catch(function(){online=false;flushing=false;draw();});
+  }
+  return next();
+}
+
+/* ---------- what the screen shows = server state + updates still waiting in the queue ---------- */
+function pendingFor(kind,key){
+  return queue().filter(function(x){return x.ev&&((kind==="job"&&x.action==="t_job"&&x.ev.dutyId===key)||(kind==="tool"&&x.action==="t_tool"&&x.ev.toolId===key));});
+}
+function jobView(j){
+  var st=j.status,jcc=j.jcc,pend=false;
+  pendingFor("job",j.id).forEach(function(x){pend=true;
+    if(x.ev.act==="start"&&st==="Pending")st="In Progress";
+    if(x.ev.act==="complete"){st="Completed";jcc=x.ev.jcc;}});
+  return {st:st,jcc:jcc,pend:pend};
+}
+function toolView(t){
+  var holder=t.holder,holderId=t.holderId,since=t.since,pend=false;
+  pendingFor("tool",t.id).forEach(function(x){pend=true;
+    if(x.ev.act==="out"){holder=cfg.name;holderId="me";since=x.ev.clientTs;}
+    if(x.ev.act==="return"){holder="";holderId="";}});
+  var mine=holder&&(holderId==="me"||holder===cfg.name);
+  return {holder:holder,mine:mine,since:since,pend:pend,site:t.site};
+}
+
+/* ---------- screens ---------- */
+function draw(){
+  if(!cfg.url){return drawSetup();}
+  if(cfg.name&&cfg.pin&&!S){app.innerHTML='<div class="center card"><p class="sub">Loading your jobs\u2026</p></div>';return;}
+  if(!cfg.name||!cfg.pin||!S){return drawLogin();}
+  var pq=queue().length;
+  var held=S.tools.filter(function(t){return toolView(t).mine;});
+  var h='<header><h1>'+esc(S.tech)+'<small>'+esc(S.today)+(online?'':' · offline')+(pq?' · '+pq+' waiting to send':'')+'</small></h1>'
+    +'<button id="bRef">Refresh</button><button id="bOut">Log out</button></header>'
+    +'<nav><button data-t="jobs" aria-selected="'+(tab==="jobs")+'">Jobs</button>'
+    +'<button data-t="tools" aria-selected="'+(tab==="tools")+'">Tools</button>'
+    +'<button data-t="hist" aria-selected="'+(tab==="hist")+'">History</button></nav><main>';
+  if(!online)h+='<div class="banner b-warn">No signal. Your updates are saved on this phone and will send when the signal returns.</div>';
+  if(held.length&&tab!=="tools")h+='<div class="banner b-warn">You still hold: <b>'+held.map(function(t){return esc(t.name);}).join(", ")+'</b>. Return it in the Tools tab when you finish.</div>';
+  h+= tab==="jobs"?viewJobs():(tab==="tools"?viewTools():viewHist());
+  h+='</main>';
+  app.innerHTML=h;
+  wire();
+}
+function drawSetup(){
+  app.innerHTML='<div class="center card"><h3>GSSC Technician</h3><p class="sub">Open the link your supervisor sent you. It sets this app up for you. If you only see this message, ask him to send the link again.</p></div>';
+}
+function drawLogin(){
+  if(names===null){app.innerHTML='<div class="center card"><p class="sub">Loading…</p></div>';loadNames();return;}
+  var opts='<option value="">Select your name</option>'+names.map(function(n){return '<option'+(n===cfg.name?' selected':'')+'>'+esc(n)+'</option>';}).join("");
+  app.innerHTML='<div class="center"><div class="card"><h3>GSSC Technician</h3><p class="sub">Log in to see your jobs and tools.</p>'
+    +(loginErr?'<div class="banner b-bad" style="margin-top:12px">'+esc(loginErr)+'</div>':'')
+    +'<label>Name</label><select id="lName">'+opts+'</select>'
+    +'<label>PIN</label><input id="lPin" type="password" inputmode="numeric" autocomplete="current-password" maxlength="8">'
+    +'<div class="chk" style="border:0"><input type="checkbox" id="lStay"'+(cfg.stay?' checked':'')+'><label style="margin:0;color:var(--ink)" for="lStay">Stay logged in on this phone</label></div>'
+    +'<button class="btn wide" id="lGo">Log in</button></div>'
+    +(names.length?'':'<div class="banner b-info">No names yet. Your supervisor must set your PIN first.</div>')+'</div>';
+  el("lGo").onclick=doLogin;
+  el("lPin").onkeydown=function(e){if(e.key==="Enter")doLogin();};
+}
+function doLogin(){
+  var n=el("lName").value,p=el("lPin").value.trim();
+  if(!n||!p){loginErr="Select your name and enter your PIN.";return drawLogin();}
+  cfg.name=n;cfg.pin=p;cfg.stay=el("lStay").checked;loginErr="";
+  el("lGo").disabled=true;el("lGo").textContent="Checking…";
+  post(auth({action:"t_state"})).then(function(r){
+    if(!r||!r.ok){cfg.pin="";loginErr=r&&r.error?r.error:"Login failed";drawLogin();return;}
+    S=r;lastSync=Date.now();lsSet(S_KEY,S);saveCfg();draw();flush();
+  }).catch(function(){cfg.pin="";loginErr="No connection. Check your signal.";drawLogin();});
+}
+
+function viewJobs(){
+  if(!S.jobs.length)return '<div class="empty">No jobs assigned to you for today.<br>Pull Refresh if your supervisor just added one.</div>';
+  return S.jobs.map(function(j){
+    var v=jobView(j);
+    var cls=v.st==="In Progress"?"p-In":"p-"+v.st;
+    var btn="";
+    if(v.st==="Pending")btn='<button class="btn" data-start="'+esc(j.id)+'">Start</button>';
+    if(v.st!=="Completed")btn+='<button class="btn go" data-done="'+esc(j.id)+'">Complete</button>';
+    return '<div class="card"><div style="display:flex;justify-content:space-between;gap:8px"><h3>'+esc(j.site||"Job")+'</h3><span class="pill '+cls+'">'+esc(v.st)+'</span></div>'
+      +'<div class="sub">'+esc(dshort(j.date))+(j.activity?' · '+esc(j.activity):'')+(j.location?' · '+esc(j.location):'')+'</div>'
+      +(j.info?'<div style="margin-top:6px">'+esc(j.info)+'</div>':'')
+      +(j.items&&j.items.length?'<div class="sub" style="margin-top:6px">Scope: '+j.items.length+' item(s)</div>':'')
+      +(j.remarks?'<div class="sub" style="margin-top:6px">Note: '+esc(j.remarks)+'</div>':'')
+      +(v.st==="Completed"&&v.jcc?'<div style="margin-top:8px"><b>JCC:</b> '+esc(v.jcc)+(j.sr?' · <b>SR:</b> '+esc(j.sr):'')+'</div>':'')
+      +(v.pend?'<div class="pend">Waiting to send…</div>':'')
+      +(btn?'<div class="row">'+btn+'</div>':'')+'</div>';
+  }).join("");
+}
+function viewTools(){
+  if(!S.tools.length)return '<div class="empty">No tools set up yet.</div>';
+  return S.tools.map(function(t){
+    var v=toolView(t);
+    var st=v.holder?('<span class="pill p-out">With '+esc(v.mine?"you":v.holder)+'</span>'):'<span class="pill p-ok">Available</span>';
+    var btn="";
+    if(!v.holder)btn='<button class="btn" data-out="'+esc(t.id)+'">Take out</button>';
+    else if(v.mine)btn='<button class="btn go" data-ret="'+esc(t.id)+'">Return</button>';
+    return '<div class="card"><div style="display:flex;justify-content:space-between;gap:8px"><h3>'+esc(t.name)+'</h3>'+st+'</div>'
+      +(v.holder?'<div class="sub">Since '+esc(tm(v.since))+(v.site?' · '+esc(v.site):'')+'</div>':'')
+      +(v.pend?'<div class="pend">Waiting to send…</div>':'')
+      +(btn?'<div class="row">'+btn+'</div>':'')+'</div>';
+  }).join("");
+}
+function viewHist(){
+  if(!S.history.length&&!queue().length)return '<div class="empty">Nothing yet this month.</div>';
+  return '<div class="card">'+S.history.map(function(e){
+    var what=e.kind==="job"?(e.act==="start"?"Started":"Completed")+" — "+esc(e.site||"job")+(e.jcc?" · JCC "+esc(e.jcc):"")+(e.items&&e.items.total?" · "+e.items.done+"/"+e.items.total+" items":"")
+      :(e.act==="out"?"Took out":"Returned")+" "+esc(e.tool)+(e.site?" · "+esc(e.site):"")+(e.cond==="Damaged"?" · DAMAGED":"");
+    return '<div class="hist"><b>'+what+'</b><div class="sub">'+esc(tm(e.ts))+'</div></div>';
+  }).join("")+'</div>';
+}
+
+/* ---------- actions ---------- */
+function wire(){
+  var b;
+  el("bRef").onclick=function(){flush().then(refresh);};
+  el("bOut").onclick=function(){
+    if(queue().length&&!confirm("Some updates are not sent yet. Log out anyway? They will be lost."))return;
+    setQueue([]);cfg.pin="";cfg.name="";saveCfg();S=null;lsSet(S_KEY,null);names=null;draw();};
+  Array.prototype.forEach.call(document.querySelectorAll("nav button"),function(x){x.onclick=function(){tab=x.dataset.t;draw();};});
+  Array.prototype.forEach.call(document.querySelectorAll("[data-start]"),function(x){x.onclick=function(){
+    var j=findJob(x.dataset.start);send("t_job",{act:"start",dutyId:j.id,ref:j.ref,site:j.site});};});
+  Array.prototype.forEach.call(document.querySelectorAll("[data-done]"),function(x){x.onclick=function(){completeModal(findJob(x.dataset.done));};});
+  Array.prototype.forEach.call(document.querySelectorAll("[data-out]"),function(x){x.onclick=function(){outModal(findTool(x.dataset.out));};});
+  Array.prototype.forEach.call(document.querySelectorAll("[data-ret]"),function(x){x.onclick=function(){retModal(findTool(x.dataset.ret));};});
+}
+function findJob(id){return S.jobs.filter(function(j){return j.id===id;})[0];}
+function findTool(id){return S.tools.filter(function(t){return t.id===id;})[0];}
+
+function modal(html,onReady){
+  var m=document.createElement("div");m.className="modalbg";m.innerHTML='<div class="modal">'+html+'</div>';
+  document.body.appendChild(m);
+  m.onclick=function(e){if(e.target===m)m.remove();};
+  onReady(m);return m;
+}
+function completeModal(j){
+  var items=(j.items||[]).map(function(t,i){return '<div class="chk"><input type="checkbox" data-i="'+i+'" id="ci'+i+'"><label style="margin:0;color:var(--ink)" for="ci'+i+'">'+esc(t)+'</label></div>';}).join("");
+  modal('<h2>Complete job</h2><div class="sub">'+esc(j.site)+'</div>'
+    +(items?'<label>Scope items done</label>'+items:'')
+    +'<label>JCC number (required)</label><input id="mJcc" autocapitalize="characters" autocomplete="off">'
+    +'<label>SR number</label><input id="mSr" autocapitalize="characters" autocomplete="off">'
+    +'<label>Remarks</label><textarea id="mRem"></textarea>'
+    +'<div id="mErr" class="banner b-bad" style="display:none;margin-top:12px"></div>'
+    +'<div class="row"><button class="btn go" style="flex:1" id="mOk">Complete</button><button class="btn sec" id="mNo">Cancel</button></div>',
+  function(m){
+    el("mNo").onclick=function(){m.remove();};
+    el("mOk").onclick=function(){
+      var jcc=el("mJcc").value.trim();
+      if(!jcc){var e=el("mErr");e.textContent="Enter the JCC number to complete this job.";e.style.display="block";return;}
+      var done=m.querySelectorAll("[data-i]:checked").length;
+      var ev={act:"complete",dutyId:j.id,ref:j.ref,site:j.site,jcc:jcc,sr:el("mSr").value.trim(),remarks:el("mRem").value.trim()};
+      if(items)ev.items={done:done,total:(j.items||[]).length};
+      m.remove();send("t_job",ev);
+    };
+  });
+}
+function outModal(t){
+  var sites=(S.sites||[]).map(function(s){return '<option value="'+esc(s)+'">';}).join("");
+  modal('<h2>Take out</h2><div class="sub">'+esc(t.name)+'</div>'
+    +'<label>Site where you will use it</label><input id="mSite" list="siteList" autocomplete="off"><datalist id="siteList">'+sites+'</datalist>'
+    +'<div class="row"><button class="btn" style="flex:1" id="mOk">Take out</button><button class="btn sec" id="mNo">Cancel</button></div>',
+  function(m){
+    el("mNo").onclick=function(){m.remove();};
+    el("mOk").onclick=function(){var site=el("mSite").value.trim();m.remove();send("t_tool",{act:"out",toolId:t.id,site:site});};
+  });
+}
+function retModal(t){
+  modal('<h2>Return</h2><div class="sub">'+esc(t.name)+'</div>'
+    +'<label>Condition</label><select id="mCond"><option>OK</option><option>Damaged</option></select>'
+    +'<label>Note (optional)</label><textarea id="mNote"></textarea>'
+    +'<div class="row"><button class="btn go" style="flex:1" id="mOk">Return</button><button class="btn sec" id="mNo">Cancel</button></div>',
+  function(m){
+    el("mNo").onclick=function(){m.remove();};
+    el("mOk").onclick=function(){var c=el("mCond").value,n=el("mNote").value.trim();m.remove();send("t_tool",{act:"return",toolId:t.id,cond:c,note:n});};
+  });
+}
+
+/* ---------- start ---------- */
+window.addEventListener("online",function(){online=true;flush().then(refresh);});
+window.addEventListener("offline",function(){online=false;draw();});
+document.addEventListener("visibilitychange",function(){if(!document.hidden&&cfg.pin){flush().then(refresh);}});
+setInterval(function(){if(!document.hidden&&cfg.pin)flush().then(refresh);},60000);
+if(cfg.url&&cfg.name&&cfg.pin){var cs=lsGet(S_KEY,null);if(cs&&cs.tech===cfg.name)S=cs;draw();flush().then(refresh);}else draw();
+if(navigator.serviceWorker){navigator.serviceWorker.register("sw.js").catch(function(){});}
+})();
+</script>
+</body>
+</html>

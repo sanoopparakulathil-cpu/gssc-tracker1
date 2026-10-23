@@ -242,6 +242,7 @@
   <button role="tab" data-tab="cal" aria-selected="false">Calendar</button>
   <button role="tab" data-tab="files" aria-selected="false">Reports</button>
   <button role="tab" data-tab="duty" aria-selected="false">Duty</button>
+  <button role="tab" data-tab="tech" aria-selected="false">Tech</button>
   <button role="tab" data-tab="agent" aria-selected="false">Agent</button>
   <button role="tab" data-tab="updates" aria-selected="false">Updates</button>
   <button role="tab" data-tab="report" aria-selected="false">Month report</button>
@@ -717,7 +718,7 @@ function syncNow(loud){
     return fetch(SYNC.url,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},
       body:JSON.stringify({key:SYNC.key,data:pack()})}).then(function(r2){return r2.json();}).then(function(res2){
         if(!res2||!res2.ok)throw new Error(res2&&res2.error?res2.error:"could not save");
-        SYNC.busy=false;SYNC.last=Date.now();SYNC.err="";syncCfgSave();save();
+        SYNC.busy=false;SYNC.last=Date.now();SYNC.err="";syncCfgSave();save();techFetch(false);
         if(n){render();toast(n+" change(s) came in from your other device");}
         else{paintSync();if(loud)toast("Everything is up to date");}
         return true;});
@@ -749,6 +750,176 @@ function syncModal(){
   },SYNC.url?'<button class="btn danger" id="mDel">Unlink</button>':"");
   var d=document.getElementById("mDel");
   if(d)d.onclick=function(){SYNC.url="";SYNC.key="";SYNC.last=0;syncCfgSave();closeModal();commit("Sync switched off");};}
+
+/* ================= technician access (admin side) ================= */
+var TECHD={events:[],tools:[],pins:[],now:0,err:"",loaded:0,busy:false};
+function techApplied(){try{return JSON.parse(localStorage.getItem("gssc-tech-applied")||"[]");}catch(e){return [];}}
+function techAppliedSave(a){try{localStorage.setItem("gssc-tech-applied",JSON.stringify(a.slice(-800)));}catch(e){}}
+function techPost(body){
+  body.key=SYNC.key;
+  return fetch(SYNC.url,{method:"POST",headers:{"Content-Type":"text/plain;charset=utf-8"},body:JSON.stringify(body)})
+    .then(function(r){return r.json();});}
+function techLink(){
+  var base=location.href.split("#")[0].split("?")[0].replace(/[^\/]*$/,"");
+  return base+"tech.html?u="+encodeURIComponent(SYNC.url);}
+function techFetch(loud){
+  if(!SYNC.url||TECHD.busy)return Promise.resolve(false);
+  TECHD.busy=true;
+  return techPost({action:"a_events"}).then(function(r){
+    TECHD.busy=false;
+    if(!r||!r.ok){
+      TECHD.err=(r&&r.error==="no data sent")
+        ?"Your Apps Script is the old version. Paste the new gssc-sync.gs into Apps Script and publish it as a new version."
+        :((r&&r.error)||"Could not read technician updates");
+      if(loud)toast(TECHD.err);
+      if(tab==="tech")render();
+      return false;}
+    TECHD.err="";TECHD.events=r.events||[];TECHD.tools=r.tools||[];TECHD.pins=r.pins||[];
+    TECHD.now=r.now||Date.now();TECHD.loaded=Date.now();
+    var n=techApply();
+    if(tab==="tech")render();
+    if(loud&&!n)toast("Technician updates are up to date");
+    return true;
+  }).catch(function(){
+    TECHD.busy=false;TECHD.err="No connection";
+    if(loud)toast("No connection");
+    return false;});}
+
+/* a technician finishing a job updates the matching AMC / GMC row in your list, once per update */
+function techApply(){
+  var seen=techApplied(),set={};seen.forEach(function(i){set[i]=1;});
+  var changed=0,fresh=[];
+  TECHD.events.slice().sort(function(a,b){return a.ts-b.ts;}).forEach(function(e){
+    if(e.kind!=="job"||set[e.id])return;
+    fresh.push(e.id);
+    var p=String(e.ref||"").split("|");
+    if(p.length<2)return;
+    var r=p[0]==="amc"?byId(state.amc,p[1]):(p[0]==="gmc"?byId(state.gmc,p[1]):null);
+    if(!r)return;
+    var day=iso(new Date(e.ts));
+    if(e.act==="start"){
+      if(r.status==="Open"){r.status="Ongoing";changed++;}
+    }else if(e.act==="complete"){
+      if(r.status!=="Completed"){r.status="Completed";changed++;}
+      if(!r.doneDate){r.doneDate=day;changed++;}
+      if(p[0]==="gmc"){
+        if(!r.jccNo&&e.jcc){r.jccNo=e.jcc;r.jccDate=day;changed++;}
+      }else{
+        if(!r.srNo&&e.sr){r.srNo=e.sr;changed++;}
+        if(e.jcc&&String(r.notes||"").indexOf(e.jcc)<0){r.notes=(r.notes?r.notes+"\n":"")+"JCC "+e.jcc+" ("+e.tech+")";changed++;}}
+    }});
+  if(fresh.length)techAppliedSave(seen.concat(fresh));
+  if(changed){commit(changed+" update(s) from technicians applied");}
+  return changed;}
+
+function techAgo(ts){return ts?agoText(ts):"";}
+function techClock(ts){return ts?new Date(ts).toLocaleString("en-GB",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hour12:false}):"";}
+function techJobState(dutyId,techId){
+  var st="Pending",jcc="",sr="",last=0,items=null;
+  TECHD.events.forEach(function(e){
+    if(e.kind!=="job"||e.dutyId!==dutyId||e.techId!==techId)return;
+    last=Math.max(last,e.ts);
+    if(e.act==="start"&&st==="Pending")st="In Progress";
+    if(e.act==="complete"){st="Completed";jcc=e.jcc||"";sr=e.sr||"";items=e.items||null;}});
+  return {st:st,jcc:jcc,sr:sr,last:last,items:items};}
+
+function viewTech(){
+  if(!SYNC.url)return '<div class="card"><h2>Technicians</h2><div class="empty"><b>Link this device first</b>Open Data &amp; team, then Link device, so technician updates can reach you.</div></div>';
+  if(!TECHD.loaded&&!TECHD.busy&&!TECHD.err)techFetch(false);
+  var h='';
+  if(TECHD.err)h+='<div class="card"><div class="body"><div class="err">'+esc(TECHD.err)+'</div></div></div>';
+
+  // tools
+  h+='<div class="card"><h2>Tools <span class="count">'+TECHD.tools.length+'</span></h2><div class="body flush"><div class="tbl-wrap"><table class="rsp"><thead><tr>'
+    +'<th>Tool</th><th>Status</th><th>Since</th><th>Site</th><th></th></tr></thead><tbody>';
+  if(!TECHD.tools.length)h+='<tr><td colspan="5" class="hint">No tool data yet. Press Refresh.</td></tr>';
+  TECHD.tools.forEach(function(t){
+    var late=t.holder&&(iso(new Date(t.since))<iso(today())||new Date().getHours()>=17);
+    h+='<tr><td data-l="Tool"><b>'+esc(t.name)+'</b></td>'
+      +'<td data-l="Status">'+(t.holder?'<span class="pill" style="'+(late?'background:#FCE8E6;color:#C5221F':'')+'">With '+esc(t.holder)+(late?' · not returned':'')+'</span>':'<span class="pill ok">Available</span>')+'</td>'
+      +'<td data-l="Since">'+(t.holder?esc(techClock(t.since)):'—')+'</td>'
+      +'<td data-l="Site">'+esc(t.site||"—")+'</td>'
+      +'<td data-l="">'+(t.holder?'<button class="link" data-tret="'+esc(t.id)+'">Mark returned</button>':'')+'</td></tr>';});
+  h+='</tbody></table></div><div style="padding:10px 14px"><button class="btn ghost" id="tToolEdit">Edit tool list</button></div></div></div>';
+
+  // today's jobs from the duty schedule
+  var ds=iso(today()),rows=[];
+  state.duties.filter(function(d){return d.date===ds;}).forEach(function(d){
+    (d.techIds||[]).forEach(function(tid){rows.push({d:d,tid:tid,s:techJobState(d.id,tid)});});});
+  h+='<div class="card"><h2>Today\'s jobs by technician <span class="count">'+rows.length+'</span></h2>';
+  if(!rows.length)h+='<div class="empty"><b>No duty for today</b>Jobs show here when you assign technicians in the Duty tab.</div></div>';
+  else{
+    h+='<div class="body flush"><div class="tbl-wrap"><table class="rsp"><thead><tr><th>Technician</th><th>Site</th><th>Status</th><th>JCC</th><th>SR</th><th>Updated</th></tr></thead><tbody>';
+    rows.forEach(function(x){
+      h+='<tr><td data-l="Technician">'+esc(techName(x.tid)||"?")+'</td><td data-l="Site">'+esc(x.d.siteText||"")+'</td>'
+        +'<td data-l="Status"><span class="pill'+(x.s.st==="Completed"?' ok':'')+'">'+esc(x.s.st)+'</span></td>'
+        +'<td data-l="JCC">'+esc(x.s.jcc||"—")+(x.s.items&&x.s.items.total?' <span class="hint">('+x.s.items.done+'/'+x.s.items.total+' items)</span>':'')+'</td>'
+        +'<td data-l="SR">'+esc(x.s.sr||"—")+'</td>'
+        +'<td data-l="Updated">'+(x.s.last?esc(techAgo(x.s.last)):'—')+'</td></tr>';});
+    h+='</tbody></table></div></div></div>';}
+
+  // PINs
+  var pinRows=TECHD.pins.length?TECHD.pins:state.techs.map(function(t){return {id:t.id,name:t.name,active:t.active!==false,pinSet:false};});
+  h+='<div class="card"><h2>Technician login</h2><div class="body"><p class="hint">Each technician logs in with their name and a PIN you set here. The PIN is stored scrambled on your Google script and nobody, including you, can read it back. To change it, set a new one.</p></div>'
+    +'<div class="body flush"><div class="tbl-wrap"><table class="rsp"><thead><tr><th>Technician</th><th>PIN</th><th></th></tr></thead><tbody>';
+  pinRows.filter(function(t){return t.active!==false;}).forEach(function(t){
+    h+='<tr><td data-l="Technician"><b>'+esc(t.name)+'</b></td><td data-l="PIN">'+(t.pinSet?'<span class="pill ok">Set</span>':'<span class="pill">Not set</span>')+'</td>'
+      +'<td data-l=""><button class="link" data-tpin="'+esc(t.id)+'">'+(t.pinSet?'Change PIN':'Set PIN')+'</button>'
+      +(t.pinSet?' &nbsp; <button class="link" data-tpinx="'+esc(t.id)+'">Remove</button>':'')+'</td></tr>';});
+  h+='</tbody></table></div><div style="padding:10px 14px"><button class="btn" id="tLink">Copy technician link</button> '
+    +'<button class="btn ghost" id="tRef">Refresh</button>'
+    +'<p class="hint">Send the link to each technician on WhatsApp. They open it on their phone and tap Add to Home screen.'
+    +(TECHD.loaded?' Last read '+esc(agoText(TECHD.loaded))+'.':'')+'</p></div></div>';
+
+  // recent activity
+  var ev=TECHD.events.slice().sort(function(a,b){return b.ts-a.ts;}).slice(0,30);
+  h+='<div class="card"><h2>Recent technician activity <span class="count">'+ev.length+'</span></h2>';
+  if(!ev.length)h+='<div class="empty"><b>Nothing yet</b>Updates appear here as technicians use their phones.</div></div>';
+  else{
+    h+='<div class="body flush"><div class="tbl-wrap"><table class="rsp"><thead><tr><th>When</th><th>Technician</th><th>What</th></tr></thead><tbody>';
+    ev.forEach(function(e){
+      var what=e.kind==="job"
+        ?((e.act==="start"?"Started":"Completed")+" — "+(e.site||"job")+(e.jcc?" · JCC "+e.jcc:"")+(e.sr?" · SR "+e.sr:"")+(e.items&&e.items.total?" · "+e.items.done+"/"+e.items.total+" items":"")+(e.remarks?" · "+e.remarks:""))
+        :((e.act==="out"?"Took out ":"Returned ")+e.tool+(e.site?" · "+e.site:"")+(e.cond==="Damaged"?" · DAMAGED":"")+(e.note?" · "+e.note:""));
+      h+='<tr><td data-l="When">'+esc(techClock(e.ts))+'</td><td data-l="Technician">'+esc(e.tech)+'</td><td data-l="What">'+esc(what)+'</td></tr>';});
+    h+='</tbody></table></div></div></div>';}
+  return h;}
+
+function techWire(){
+  var v=document.getElementById("view");
+  var q=function(sel,fn){Array.prototype.forEach.call(v.querySelectorAll(sel),fn);};
+  var b=document.getElementById("tRef");if(b)b.onclick=function(){techFetch(true);};
+  b=document.getElementById("tLink");if(b)b.onclick=function(){copyText(techLink());};
+  b=document.getElementById("tToolEdit");if(b)b.onclick=toolEditModal;
+  q("[data-tret]",function(x){x.onclick=function(){
+    if(!confirm("Mark this tool as returned?"))return;
+    techPost({action:"a_return",toolId:x.dataset.tret}).then(function(r){
+      if(r&&r.ok){toast("Marked returned");techFetch(false);}else toast((r&&r.error)||"Failed");});};});
+  q("[data-tpin]",function(x){x.onclick=function(){pinModal(x.dataset.tpin);};});
+  q("[data-tpinx]",function(x){x.onclick=function(){
+    if(!confirm("Remove this PIN? The technician will not be able to log in."))return;
+    techPost({action:"a_clearpin",techId:x.dataset.tpinx}).then(function(r){
+      if(r&&r.ok){toast("PIN removed");techFetch(false);}else toast((r&&r.error)||"Failed");});};});}
+
+function pinModal(id){
+  var nm=techName(id);
+  openModal("PIN for "+nm,'<div class="field"><label>New PIN (4 to 8 digits)</label><input id="fPin" inputmode="numeric" maxlength="8" autocomplete="off"></div>'
+    +'<p class="hint">Tell the technician the PIN yourself. It cannot be read back later.</p>',function(){
+    var p=val("fPin");
+    if(!/^[0-9]{4,8}$/.test(p))return mErr("The PIN must be 4 to 8 digits.");
+    techPost({action:"a_setpin",techId:id,pin:p}).then(function(r){
+      if(r&&r.ok){closeModal();toast("PIN saved for "+nm);techFetch(false);}
+      else mErr((r&&r.error==="no data sent")?"Your Apps Script is the old version. Paste the new gssc-sync.gs and publish it.":((r&&r.error)||"Could not save"));
+    }).catch(function(){mErr("No connection");});});}
+
+function toolEditModal(){
+  openModal("Tool list",'<div class="field"><label>One tool per line</label><textarea id="fTools" rows="6">'+esc(TECHD.tools.map(function(t){return t.name;}).join("\n"))+'</textarea></div>'
+    +'<p class="hint">Add new tools here later. A tool that is with a technician cannot be removed until it is returned. For two kits, write Smoke Test Kit 1 and Smoke Test Kit 2.</p>',function(){
+    var names=document.getElementById("fTools").value.split("\n").map(function(x){return x.trim();}).filter(function(x){return x;});
+    if(!names.length)return mErr("Keep at least one tool.");
+    techPost({action:"a_tools",names:names}).then(function(r){
+      if(r&&r.ok){closeModal();toast("Tool list saved");techFetch(false);}else mErr((r&&r.error)||"Could not save");
+    }).catch(function(){mErr("No connection");});});}
 
 /* ================= passcode lock ================= */
 var LOCK={on:false,hash:"",mins:5,at:0};
@@ -911,8 +1082,9 @@ function render(){
     +'<span style="margin-left:auto"></span>'
     +'<button class="btn ghost" id="genNext">Generate '+mLabel(mAdd(m,1))+' schedule</button>';
   document.getElementById("view").innerHTML=
-    ({dash:viewDash,search:viewSearch,amc:viewAmc,gmc:viewGmc,oncall:viewCall,cal:viewCal,files:viewFiles,duty:viewDuty,agent:viewAgent,updates:viewUpdates,report:viewReport,data:viewData})[tab]();
+    ({dash:viewDash,search:viewSearch,amc:viewAmc,gmc:viewGmc,oncall:viewCall,cal:viewCal,files:viewFiles,duty:viewDuty,tech:viewTech,agent:viewAgent,updates:viewUpdates,report:viewReport,data:viewData})[tab]();
   wire();
+  if(tab==="tech")techWire();
   paintSync();
   if(state.files&&state.files.length)paintThumbs();
 }

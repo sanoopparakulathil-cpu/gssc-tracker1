@@ -1,0 +1,40 @@
+TECHNICIAN ACCESS - SETUP (about 5 minutes)
+
+1. UPDATE THE GOOGLE SCRIPT (laptop)
+   - Open your GSSC sync script in Google Apps Script.
+   - Select all, paste the new gssc-sync.gs over it.
+   - Put your own two values back at the top:
+       KEY       = your secret key (same one the tracker uses)
+       CLAUDE_KEY = your Claude key (if you use the agent)
+     The file in GitHub has placeholders, so if you skip this the tracker stops syncing.
+   - Deploy > Manage deployments > pencil > Version: New version > Deploy.
+     The /exec address stays the same.
+
+2. PUBLISH THE PAGES
+   - index.html, tech.html, tech.webmanifest and sw.js go to GitHub Pages
+     (same repo gssc-tracker1, main branch).
+
+3. SET TECHNICIAN PINS
+   - Open the tracker > Tech tab > Set PIN for each technician.
+   - Technicians must be in Data & team, and Active.
+
+4. SEND THE LINK
+   - Tech tab > Copy technician link > send on WhatsApp.
+   - Technician opens it, chooses name, enters PIN, then Add to Home screen.
+
+5. ASSIGN WORK
+   - Technicians see jobs from the Duty tab (today and the last 3 days).
+   - Link each duty to an AMC / GMC job so their completion updates your list.
+   - GMC scope: write one item per line in the GMC Scope field so technicians can tick them.
+
+TOOLS
+   - Starts with: Smoke Test Kit.
+   - Tech tab > Edit tool list to add more later.
+
+NOTES
+   - Technicians never get your secret key. They can only see their own jobs,
+     update them, and take out / return tools.
+   - JCC number is compulsory to complete any job.
+   - A technician's updates go in a separate Drive file (gssc-tech-data.json),
+     so they cannot overwrite your AMC / GMC lists.
+   - Wrong PIN 5 times locks that technician for 15 minutes.
