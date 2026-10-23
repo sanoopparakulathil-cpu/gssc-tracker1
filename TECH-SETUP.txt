@@ -27,6 +27,13 @@ TECHNICIAN ACCESS - SETUP (about 5 minutes)
    - Link each duty to an AMC / GMC job so their completion updates your list.
    - GMC scope: write one item per line in the GMC Scope field so technicians can tick them.
 
+AMC / GMC LISTS
+   - Technicians see the full AMC list (this month and anything unfinished from earlier
+     months) and the GMC list, and can mark a row completed: date, JCC number, and their
+     own name is filled automatically. You see it in the AMC and GMC tables (JCC no, Done by).
+   - GMC with scope items: every item must be ticked, otherwise nothing is marked.
+     Write one scope item per line in the GMC Scope field.
+
 TOOLS
    - Starts with: Smoke Test Kit.
    - Tech tab > Edit tool list to add more later.

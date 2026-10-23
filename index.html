@@ -790,23 +790,25 @@ function techApply(){
   var seen=techApplied(),set={};seen.forEach(function(i){set[i]=1;});
   var changed=0,fresh=[];
   TECHD.events.slice().sort(function(a,b){return a.ts-b.ts;}).forEach(function(e){
-    if(e.kind!=="job"||set[e.id])return;
+    if((e.kind!=="job"&&e.kind!=="row")||set[e.id])return;
     fresh.push(e.id);
-    var p=String(e.ref||"").split("|");
-    if(p.length<2)return;
-    var r=p[0]==="amc"?byId(state.amc,p[1]):(p[0]==="gmc"?byId(state.gmc,p[1]):null);
+    var kind,rid;
+    if(e.kind==="row"){kind=e.rowKind;rid=e.rowId;}
+    else{var p=String(e.ref||"").split("|");if(p.length<2)return;kind=p[0];rid=p[1];}
+    var r=kind==="amc"?byId(state.amc,rid):(kind==="gmc"?byId(state.gmc,rid):null);
     if(!r)return;
-    var day=iso(new Date(e.ts));
+    var day=e.doneDate||iso(new Date(e.ts));
     if(e.act==="start"){
       if(r.status==="Open"){r.status="Ongoing";changed++;}
     }else if(e.act==="complete"){
       if(r.status!=="Completed"){r.status="Completed";changed++;}
       if(!r.doneDate){r.doneDate=day;changed++;}
-      if(p[0]==="gmc"){
-        if(!r.jccNo&&e.jcc){r.jccNo=e.jcc;r.jccDate=day;changed++;}
-      }else{
-        if(!r.srNo&&e.sr){r.srNo=e.sr;changed++;}
-        if(e.jcc&&String(r.notes||"").indexOf(e.jcc)<0){r.notes=(r.notes?r.notes+"\n":"")+"JCC "+e.jcc+" ("+e.tech+")";changed++;}}
+      if(!r.doneBy&&e.tech){r.doneBy=e.tech;changed++;}
+      if(!r.jccNo&&e.jcc){r.jccNo=e.jcc;changed++;}
+      if(kind==="gmc"){if(!r.jccDate&&e.jcc){r.jccDate=day;changed++;}}
+      else if(!r.srNo&&e.sr){r.srNo=e.sr;changed++;}
+      if(e.remarks){var fld=kind==="gmc"?"remarks":"notes";
+        if(String(r[fld]||"").indexOf(e.remarks)<0){r[fld]=(r[fld]?r[fld]+"\n":"")+e.tech+": "+e.remarks;changed++;}}
     }});
   if(fresh.length)techAppliedSave(seen.concat(fresh));
   if(changed){commit(changed+" update(s) from technicians applied");}
@@ -878,7 +880,9 @@ function viewTech(){
   else{
     h+='<div class="body flush"><div class="tbl-wrap"><table class="rsp"><thead><tr><th>When</th><th>Technician</th><th>What</th></tr></thead><tbody>';
     ev.forEach(function(e){
-      var what=e.kind==="job"
+      var what=e.kind==="row"
+        ?("Completed "+(e.rowKind==="amc"?"AMC ":"GMC ")+(e.no||"")+" \u2014 "+(e.site||"")+" \u00b7 JCC "+(e.jcc||"")+(e.doneDate?" \u00b7 "+e.doneDate:"")+(e.items&&e.items.total?" \u00b7 all "+e.items.total+" items":"")+(e.remarks?" \u00b7 "+e.remarks:""))
+        :e.kind==="job"
         ?((e.act==="start"?"Started":"Completed")+" — "+(e.site||"job")+(e.jcc?" · JCC "+e.jcc:"")+(e.sr?" · SR "+e.sr:"")+(e.items&&e.items.total?" · "+e.items.done+"/"+e.items.total+" items":"")+(e.remarks?" · "+e.remarks:""))
         :((e.act==="out"?"Took out ":"Returned ")+e.tool+(e.site?" · "+e.site:"")+(e.cond==="Damaged"?" · DAMAGED":"")+(e.note?" · "+e.note:""));
       h+='<tr><td data-l="When">'+esc(techClock(e.ts))+'</td><td data-l="Technician">'+esc(e.tech)+'</td><td data-l="What">'+esc(what)+'</td></tr>';});
@@ -1365,8 +1369,8 @@ function viewAmc(){
   h+='<div class="card"><h2>AMC service schedule &mdash; '+esc(mLabel(m))+' <span class="count">'+d+' of '+rows.length+' completed</span></h2>'
     +'<div class="body flush"><div class="tbl-wrap"><table id="amcTbl" class="rsp"><thead><tr>'
     +'<th>AMC no</th><th>Site</th><th>System</th><th>Serv</th><th>Service date</th><th>Status</th>'
-    +'<th>SR no</th><th>Report</th><th>QTN</th><th>Technicians</th><th>Contract</th><th></th></tr></thead><tbody>';
-  if(!rows.length)h+='<tr><td colspan="12"><div class="empty"><b>No AMC list for '+esc(mLabel(m))+'</b>Use &ldquo;Generate schedule&rdquo; above or import the Excel list.</div></td></tr>';
+    +'<th>SR no</th><th>JCC no</th><th>Done by</th><th>Report</th><th>QTN</th><th>Technicians</th><th>Contract</th><th></th></tr></thead><tbody>';
+  if(!rows.length)h+='<tr><td colspan="14"><div class="empty"><b>No AMC list for '+esc(mLabel(m))+'</b>Use &ldquo;Generate schedule&rdquo; above or import the Excel list.</div></td></tr>';
   rows.forEach(function(a){
     var fl=amcFlag(a);
     h+='<tr class="'+(fl?"f-"+fl:"")+'" data-row="'+esc((a.amcNo+" "+a.site+" "+a.system+" "+a.client).toLowerCase())+'" data-stat="'+esc(a.status)+'">'
@@ -1375,6 +1379,8 @@ function viewAmc(){
       +'<td data-l="System">'+esc(a.system)+'</td><td class="num" data-l="Service">'+esc(a.serviceNo)+'</td>'
       +'<td data-l="Service date">'+dateInp("amc",a)+'</td><td data-l="Status">'+statusSel("amc",a)+'</td>'
       +'<td class="num" data-l="SR no">'+(a.srNo?esc(a.srNo):'<span class="sub">\u2014</span>')+'</td>'
+      +'<td class="num" data-l="JCC no">'+(a.jccNo?esc(a.jccNo):'<span class="sub">\u2014</span>')+'</td>'
+      +'<td data-l="Done by">'+(a.doneBy?esc(a.doneBy):'<span class="sub">\u2014</span>')+'</td>'
       +'<td data-l="Report">'+reportSel("amc",a)+'</td><td data-l="QTN">'+qtnSel("amc",a)+'</td>'
       +'<td data-l="Technicians">'+(techNames(a.techs)||esc(a.techText||"")||'<span class="sub">\u2014</span>')+'</td>'
       +'<td data-l="Contract">'+cPill(a.contractStatus)+'</td>'
@@ -1427,7 +1433,7 @@ function viewGmc(){
     +'<span class="count">newest number: '+esc(maxGmc())+'</span></h2>'
     +'<div class="body flush"><div class="tbl-wrap"><table id="gmcTbl" class="rsp"><thead><tr>'
     +'<th>GMC no</th><th>Client</th><th>Job description</th><th>Month</th><th>Scheduled</th><th>Status</th>'
-    +'<th>Report</th><th>QTN</th><th>JCC no</th><th>JCC date</th><th></th></tr></thead><tbody>';
+    +'<th>Report</th><th>QTN</th><th>JCC no</th><th>JCC date</th><th>Done by</th><th></th></tr></thead><tbody>';
   rows.forEach(function(g){
     h+='<tr data-row="'+esc((g.gmcNo+" "+g.clientRaw+" "+g.desc+" "+g.jccNo).toLowerCase())+'" data-stat="'+esc(g.status)+'" data-month="'+esc(g.month||"")+'">'
       +'<td class="num site-name" data-l="GMC no">'+esc(g.gmcNo)+'</td><td data-l="Client">'+esc(g.clientRaw)+'</td>'
@@ -1436,6 +1442,7 @@ function viewGmc(){
       +'<td data-l="Scheduled">'+dateInp("gmc",g)+'</td><td data-l="Status">'+statusSel("gmc",g)+'</td>'
       +'<td data-l="Report">'+reportSel("gmc",g)+'</td><td data-l="QTN">'+qtnSel("gmc",g)+'</td>'
       +'<td class="num" data-l="JCC no">'+esc(g.jccNo||"\u2014")+'</td><td class="num" data-l="JCC date">'+fmt(g.jccDate)+'</td>'
+      +'<td data-l="Done by">'+esc(g.doneBy||"\u2014")+'</td>'
       +'<td data-l=""><button class="link" data-open="gmc|'+g.id+'">Open</button>'
       +'<button class="link" data-up="gmc|'+g.id+'">Report</button></td></tr>';});
   return h+'</tbody></table></div></div></div>';
@@ -2675,6 +2682,8 @@ function amcModal(a){
     +'<div class="field"><label>AMC no</label><input id="fNo" value="'+esc(a.amcNo)+'"></div>'
     +'<div class="field"><label>Service no</label><input id="fServ" value="'+esc(a.serviceNo)+'"></div>'
     +'<div class="field"><label>SR no (service report)</label><input id="fSr" value="'+esc(a.srNo||"")+'" placeholder="SF/16659"></div>'
+    +'<div class="field"><label>JCC no</label><input id="fJccA" value="'+esc(a.jccNo||"")+'"></div>'
+    +'<div class="field"><label>Completed by</label><input id="fBy" value="'+esc(a.doneBy||"")+'"></div>'
     +'<div class="field"><label>Technician names from the sheet</label><input id="fTx" value="'+esc(a.techText||"")+'"></div></div>'
     +'<div class="field"><label>Site name</label><input id="fSite" value="'+esc(a.site)+'"></div>'
     +'<div class="field"><label>System</label><input id="fSys" value="'+esc(a.system)+'"></div>'
@@ -2700,7 +2709,7 @@ function amcModal(a){
     var rec={id:a.id||uid(),month:a.month||state.curMonth,contractId:a.contractId,amcNo:val("fNo"),site:val("fSite"),
       system:val("fSys"),serviceNo:val("fServ"),client:val("fClient")||val("fSite"),location:val("fLoc"),
       freq:a.freq,contractStatus:val("fCs"),status:val("fStat"),schedDate:val("fSched"),doneDate:val("fDone"),
-      report:val("fRep"),qtn:val("fQtn"),techs:checked("fTechs"),srNo:val("fSr"),techText:val("fTx"),
+      report:val("fRep"),qtn:val("fQtn"),techs:checked("fTechs"),srNo:val("fSr"),jccNo:val("fJccA"),doneBy:val("fBy"),techText:val("fTx"),
       remind:+val("fRm"),notes:val("fNotes")};
     if(a.id){for(var i=0;i<state.amc.length;i++)if(state.amc[i].id===a.id)state.amc[i]=rec;}
     else state.amc.push(rec);
@@ -2731,6 +2740,7 @@ function gmcModal(g){
     +'<div class="field"><label>Quotation to client (QTN)</label><select id="fQtn">'+opts(QTN,g.qtn||"To be sent")+'</select></div>'
     +'<div class="field"><label>JCC no</label><input id="fJcc" value="'+esc(g.jccNo||"")+'"></div>'
     +'<div class="field"><label>JCC date</label><input type="date" id="fJccD" value="'+esc(g.jccDate||"")+'"></div>'
+    +'<div class="field"><label>Completed by</label><input id="fBy" value="'+esc(g.doneBy||"")+'"></div>'
     +'<div class="field"><label>Remind me before the date</label><select id="fRm">'
       +[0,1,2,3,7,14].map(function(x){return '<option value="'+x+'"'+(x===(g.remind===undefined?1:g.remind)?" selected":"")+'>'
         +(x?(x+" day(s) before"):"no reminder")+'</option>';}).join("")+'</select></div></div>'
@@ -2742,7 +2752,7 @@ function gmcModal(g){
   openModal(isNew?"Log GMC job":g.gmcNo+" \u2014 "+g.client,body,function(){
     if(!val("fNo"))return mErr("Enter the GMC / OSF number.");
     var rec={id:g.id||uid(),month:val("fMonth")||state.curMonth,gmcNo:gmcNorm(val("fNo")),clientRaw:val("fRaw")||val("fClient"),
-      client:val("fClient")||val("fRaw"),desc:val("fDesc"),scope:val("fScope"),jccNo:val("fJcc"),jccDate:val("fJccD"),
+      client:val("fClient")||val("fRaw"),desc:val("fDesc"),scope:val("fScope"),jccNo:val("fJcc"),jccDate:val("fJccD"),doneBy:val("fBy"),
       status:val("fStat"),report:val("fRep"),qtn:val("fQtn"),schedDate:val("fSched"),doneDate:val("fDone"),
       techs:checked("fTechs"),remind:+val("fRm"),remarks:val("fRem"),location:val("fLoc")};
     if(g.id){for(var i=0;i<state.gmc.length;i++)if(state.gmc[i].id===g.id)state.gmc[i]=rec;}

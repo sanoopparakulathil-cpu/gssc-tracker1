@@ -326,6 +326,42 @@ function jobInfo_(main, duty) {
   return out;
 }
 
+/* every completion a technician has made on an AMC / GMC row */
+function rowDone_(h) {
+  var m = {};
+  h.d.events.forEach(function (e) {
+    if (e.kind === "row" && e.act === "complete") m[e.rowKind + "|" + e.rowId] = e;
+  });
+  return m;
+}
+
+/* the full AMC and GMC lists a technician can see and tick off */
+function listsFor_(main, h) {
+  var done = rowDone_(h);
+  var cur = String(main.curMonth || dayStr_(0).slice(0, 7));
+  var recent = dayStr_(-60);
+  var amc = [], gmc = [];
+  (main.amc || []).forEach(function (a) {
+    var ev = done["amc|" + a.id], fin = a.status === "Completed" || !!ev, m = String(a.month || "");
+    if (a.status === "Cancelled") return;
+    if (m !== cur && !(m < cur && !fin) && !ev) return;
+    amc.push({ id: a.id, month: m, no: a.amcNo || "", site: a.site || "", system: a.system || "", serv: a.serviceNo || "",
+      sched: a.schedDate || "", status: fin ? "Completed" : (a.status || "Open"),
+      doneDate: ev ? ev.doneDate : (a.doneDate || ""), jcc: ev ? ev.jcc : (a.jccNo || ""),
+      by: ev ? ev.tech : (a.doneBy || ""), sr: ev ? (ev.sr || a.srNo || "") : (a.srNo || "") });
+  });
+  (main.gmc || []).forEach(function (g) {
+    var ev = done["gmc|" + g.id], fin = g.status === "Completed" || !!ev;
+    if (fin && !ev && String(g.doneDate || "") < recent) return;
+    gmc.push({ id: g.id, month: String(g.month || ""), no: g.gmcNo || "", client: g.client || g.clientRaw || "", desc: g.desc || "",
+      items: scopeItems_(g.scope), sched: g.schedDate || "", status: fin ? "Completed" : (g.status || "Open"),
+      doneDate: ev ? ev.doneDate : (g.doneDate || ""), jcc: ev ? ev.jcc : (g.jccNo || ""), by: ev ? ev.tech : (g.doneBy || "") });
+  });
+  amc.sort(function (a, b) { return a.site < b.site ? -1 : (a.site > b.site ? 1 : 0); });
+  gmc.sort(function (a, b) { return a.no < b.no ? 1 : (a.no > b.no ? -1 : 0); });
+  return { amc: amc.slice(0, 400), gmc: gmc.slice(0, 400) };
+}
+
 function techState_(tech, h, main) {
   var from = dayStr_(-3), to = dayStr_(1);
   var st = jobStatus_(h.d);
@@ -340,8 +376,9 @@ function techState_(tech, h, main) {
   }).sort(function (a, b) { return a.date < b.date ? 1 : (a.date > b.date ? -1 : 0); });
   var mine = h.d.events.filter(function (e) { return e.techId === tech.id && e.ts > Date.now() - 31 * 864e5; })
     .slice(-60).reverse();
+  var L = listsFor_(main, h);
   return { ok: true, tech: tech.name, today: dayStr_(0), jobs: jobs, tools: toolState_(h.d), history: mine,
-           sites: siteNames_(main) };
+           sites: siteNames_(main), amc: L.amc, gmc: L.gmc };
 }
 
 function siteNames_(main) {
@@ -380,10 +417,40 @@ function techAct_(body) {
     if (ev.act === "complete") {
       rec.jcc = String(ev.jcc || "").trim().slice(0, 40);
       if (!rec.jcc) return json_({ ok: false, error: "JCC number is compulsory to complete a job." });
+      var duty = null;
+      (main.duties || []).forEach(function (x) { if (x.id === rec.dutyId) duty = x; });
+      var need = duty ? jobInfo_(main, duty).items : [];
+      if (need.length && !(ev.items && ev.items.total === need.length && ev.items.done === need.length)) {
+        return json_({ ok: false, error: "Tick every scope item. Nothing was marked completed." });
+      }
       rec.sr = String(ev.sr || "").trim().slice(0, 40);
       rec.remarks = String(ev.remarks || "").slice(0, 500);
       if (ev.items) rec.items = { done: Number(ev.items.done) || 0, total: Number(ev.items.total) || 0 };
     }
+  } else if (act === "t_row") {
+    if (ev.rowKind !== "amc" && ev.rowKind !== "gmc") return json_({ ok: false, error: "bad list" });
+    var row = null, rows = ev.rowKind === "amc" ? (main.amc || []) : (main.gmc || []);
+    rows.forEach(function (x) { if (x.id === ev.rowId) row = x; });
+    if (!row) return json_({ ok: false, error: "Job not found. Refresh and try again." });
+    var prior = rowDone_(h)[ev.rowKind + "|" + row.id];
+    if (prior) return json_({ ok: false, error: "Already completed by " + prior.tech + "." });
+    if (row.status === "Completed") return json_({ ok: false, error: "Already marked completed." });
+    var jc = String(ev.jcc || "").trim().slice(0, 40);
+    if (!jc) return json_({ ok: false, error: "JCC number is compulsory." });
+    var dd = String(ev.doneDate || "");
+    if (!/^\d{4}-\d{2}-\d{2}$/.test(dd) || dd > dayStr_(0) || dd < dayStr_(-45)) {
+      return json_({ ok: false, error: "Completed date must be within the last 45 days and not in the future." });
+    }
+    var items = ev.rowKind === "gmc" ? scopeItems_(row.scope) : [];
+    if (items.length && !(ev.items && ev.items.total === items.length && ev.items.done === items.length)) {
+      return json_({ ok: false, error: "Tick every scope item. Nothing was marked completed." });
+    }
+    rec.kind = "row"; rec.act = "complete"; rec.rowKind = ev.rowKind; rec.rowId = row.id;
+    rec.site = ev.rowKind === "amc" ? (row.site || "") : (row.client || row.clientRaw || "");
+    rec.no = ev.rowKind === "amc" ? (row.amcNo || "") : (row.gmcNo || "");
+    rec.doneDate = dd; rec.jcc = jc; rec.sr = String(ev.sr || "").trim().slice(0, 40);
+    rec.remarks = String(ev.remarks || "").slice(0, 500);
+    if (items.length) rec.items = { done: items.length, total: items.length };
   } else if (act === "t_tool") {
     if (ev.act !== "out" && ev.act !== "return") return json_({ ok: false, error: "bad tool action" });
     var tools = toolState_(h.d), t = null;

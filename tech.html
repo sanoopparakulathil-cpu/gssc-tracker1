@@ -18,7 +18,7 @@ header h1{font-size:17px;margin:0;flex:1}
 header small{display:block;font-weight:400;opacity:.8;font-size:12px}
 header button{background:rgba(255,255,255,.15);color:#fff;border:0;border-radius:8px;padding:8px 12px;font-size:14px}
 nav{display:flex;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
-nav button{flex:1;padding:14px 4px;border:0;background:none;font-size:15px;color:var(--mute);border-bottom:3px solid transparent}
+nav button{flex:1;padding:14px 2px;border:0;background:none;font-size:14px;color:var(--mute);border-bottom:3px solid transparent}
 nav button[aria-selected=true]{color:var(--navy);border-bottom-color:var(--navy);font-weight:600}
 main{padding:14px 16px 90px;max-width:640px;margin:0 auto}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
@@ -63,6 +63,7 @@ textarea{min-height:80px;font-family:inherit}
 var CFG_KEY="gssc-tech-cfg", Q_KEY="gssc-tech-q", S_KEY="gssc-tech-s";
 var cfg={url:"",name:"",pin:"",stay:true};
 var S=null;            // last state from server
+var LQ={amc:"",gmc:""}, LF={amc:"open",gmc:"open"};
 var tab="jobs", busy=false, loginErr="", names=null, online=true, lastSync=0, flushing=false;
 var el=function(id){return document.getElementById(id);};
 var app=el("app");
@@ -163,11 +164,13 @@ function draw(){
   var h='<header><h1>'+esc(S.tech)+'<small>'+esc(S.today)+(online?'':' · offline')+(pq?' · '+pq+' waiting to send':'')+'</small></h1>'
     +'<button id="bRef">Refresh</button><button id="bOut">Log out</button></header>'
     +'<nav><button data-t="jobs" aria-selected="'+(tab==="jobs")+'">Jobs</button>'
+    +'<button data-t="amc" aria-selected="'+(tab==="amc")+'">AMC</button>'
+    +'<button data-t="gmc" aria-selected="'+(tab==="gmc")+'">GMC</button>'
     +'<button data-t="tools" aria-selected="'+(tab==="tools")+'">Tools</button>'
     +'<button data-t="hist" aria-selected="'+(tab==="hist")+'">History</button></nav><main>';
   if(!online)h+='<div class="banner b-warn">No signal. Your updates are saved on this phone and will send when the signal returns.</div>';
   if(held.length&&tab!=="tools")h+='<div class="banner b-warn">You still hold: <b>'+held.map(function(t){return esc(t.name);}).join(", ")+'</b>. Return it in the Tools tab when you finish.</div>';
-  h+= tab==="jobs"?viewJobs():(tab==="tools"?viewTools():viewHist());
+  h+= tab==="jobs"?viewJobs():(tab==="tools"?viewTools():(tab==="hist"?viewHist():viewList(tab)));
   h+='</main>';
   app.innerHTML=h;
   wire();
@@ -217,6 +220,41 @@ function viewJobs(){
       +(btn?'<div class="row">'+btn+'</div>':'')+'</div>';
   }).join("");
 }
+function rowView(kind,r){
+  var st=r.status,jcc=r.jcc,dd=r.doneDate,by=r.by,pend=false;
+  queue().forEach(function(x){
+    if(x.action==="t_row"&&x.ev.rowKind===kind&&x.ev.rowId===r.id){pend=true;st="Completed";jcc=x.ev.jcc;dd=x.ev.doneDate;by=cfg.name;}});
+  return {st:st,jcc:jcc,dd:dd,by:by,pend:pend,done:st==="Completed"};
+}
+function viewList(kind){
+  var rows=S[kind]||[];
+  return '<input type="search" id="lq" placeholder="Search '+(kind==="amc"?"site or AMC no":"GMC no, client or job")+'" value="'+esc(LQ[kind])+'" autocomplete="off">'
+    +'<select id="lf" style="margin-top:8px"><option value="open"'+(LF[kind]==="open"?" selected":"")+'>Not completed</option>'
+    +'<option value="done"'+(LF[kind]==="done"?" selected":"")+'>Completed</option><option value="all"'+(LF[kind]==="all"?" selected":"")+'>All</option></select>'
+    +'<div id="lst" style="margin-top:12px">'+listHtml(kind)+'</div>';
+}
+function listHtml(kind){
+  var q=LQ[kind].trim().toLowerCase(),f=LF[kind],out=[],total=0;
+  (S[kind]||[]).forEach(function(r){
+    var v=rowView(kind,r);
+    if(f==="open"&&v.done)return;if(f==="done"&&!v.done)return;
+    var hay=(kind==="amc"?[r.no,r.site,r.system,r.serv]:[r.no,r.client,r.desc]).join(" ").toLowerCase();
+    if(q&&hay.indexOf(q)<0)return;
+    total++;if(out.length>=80)return;
+    var cls=v.st==="Completed"?"p-Completed":((v.st==="Ongoing"||v.st==="Balance Work")?"p-In":"p-Pending");
+    var title=kind==="amc"?(r.site||"AMC"):(r.client||"GMC");
+    var line=kind==="amc"?(esc(r.no)+(r.serv?" \u00b7 "+esc(r.serv):"")+(r.system?" \u00b7 "+esc(r.system):"")+(r.sched?" \u00b7 "+esc(dshort(r.sched)):""))
+      :(esc(r.no)+(r.desc?" \u2014 "+esc(r.desc):"")+(r.sched?" \u00b7 "+esc(dshort(r.sched)):""));
+    out.push('<div class="card"><div style="display:flex;justify-content:space-between;gap:8px"><h3>'+esc(title)+'</h3><span class="pill '+cls+'">'+esc(v.st)+'</span></div>'
+      +'<div class="sub">'+line+'</div>'
+      +(kind==="gmc"&&r.items.length?'<div class="sub" style="margin-top:4px">Scope: '+r.items.length+' item(s)</div>':'')
+      +(v.done?'<div style="margin-top:8px">'+(v.dd?'<b>Done:</b> '+esc(dshort(v.dd)):'')+(v.jcc?' \u00b7 <b>JCC:</b> '+esc(v.jcc):'')+(v.by?' \u00b7 <b>By:</b> '+esc(v.by):'')+'</div>':'')
+      +(v.pend?'<div class="pend">Waiting to send\u2026</div>':'')
+      +(v.done?'':'<div class="row"><button class="btn go" data-row="'+kind+'|'+esc(r.id)+'">Mark completed</button></div>')+'</div>');
+  });
+  if(!out.length)return '<div class="empty">Nothing found.</div>';
+  return out.join("")+(total>80?'<div class="empty">Showing 80 of '+total+'. Use search to find the rest.</div>':'');
+}
 function viewTools(){
   if(!S.tools.length)return '<div class="empty">No tools set up yet.</div>';
   return S.tools.map(function(t){
@@ -234,7 +272,8 @@ function viewTools(){
 function viewHist(){
   if(!S.history.length&&!queue().length)return '<div class="empty">Nothing yet this month.</div>';
   return '<div class="card">'+S.history.map(function(e){
-    var what=e.kind==="job"?(e.act==="start"?"Started":"Completed")+" — "+esc(e.site||"job")+(e.jcc?" · JCC "+esc(e.jcc):"")+(e.items&&e.items.total?" · "+e.items.done+"/"+e.items.total+" items":"")
+    var what=e.kind==="row"?"Completed "+(e.rowKind==="amc"?"AMC ":"GMC ")+esc(e.no||"")+" \u2014 "+esc(e.site||"")+" \u00b7 JCC "+esc(e.jcc||"")+(e.doneDate?" \u00b7 "+esc(dshort(e.doneDate)):"")
+      :e.kind==="job"?(e.act==="start"?"Started":"Completed")+" — "+esc(e.site||"job")+(e.jcc?" · JCC "+esc(e.jcc):"")+(e.items&&e.items.total?" · "+e.items.done+"/"+e.items.total+" items":"")
       :(e.act==="out"?"Took out":"Returned")+" "+esc(e.tool)+(e.site?" · "+esc(e.site):"")+(e.cond==="Damaged"?" · DAMAGED":"");
     return '<div class="hist"><b>'+what+'</b><div class="sub">'+esc(tm(e.ts))+'</div></div>';
   }).join("")+'</div>';
@@ -251,8 +290,15 @@ function wire(){
   Array.prototype.forEach.call(document.querySelectorAll("[data-start]"),function(x){x.onclick=function(){
     var j=findJob(x.dataset.start);send("t_job",{act:"start",dutyId:j.id,ref:j.ref,site:j.site});};});
   Array.prototype.forEach.call(document.querySelectorAll("[data-done]"),function(x){x.onclick=function(){completeModal(findJob(x.dataset.done));};});
+  var lq=el("lq");
+  if(lq){lq.oninput=function(){LQ[tab]=lq.value;el("lst").innerHTML=listHtml(tab);wireRows();};
+    el("lf").onchange=function(){LF[tab]=el("lf").value;el("lst").innerHTML=listHtml(tab);wireRows();};wireRows();}
   Array.prototype.forEach.call(document.querySelectorAll("[data-out]"),function(x){x.onclick=function(){outModal(findTool(x.dataset.out));};});
   Array.prototype.forEach.call(document.querySelectorAll("[data-ret]"),function(x){x.onclick=function(){retModal(findTool(x.dataset.ret));};});
+}
+function wireRows(){
+  Array.prototype.forEach.call(document.querySelectorAll("[data-row]"),function(x){x.onclick=function(){
+    var p=x.dataset.row.split("|"),r=(S[p[0]]||[]).filter(function(y){return y.id===p[1];})[0];if(r)rowModal(p[0],r);};});
 }
 function findJob(id){return S.jobs.filter(function(j){return j.id===id;})[0];}
 function findTool(id){return S.tools.filter(function(t){return t.id===id;})[0];}
@@ -263,10 +309,45 @@ function modal(html,onReady){
   m.onclick=function(e){if(e.target===m)m.remove();};
   onReady(m);return m;
 }
+function gateItems(m,total,btnId,okLabel){
+  var btn=el(btnId),hint=el("mGate");
+  function upd(){var n=m.querySelectorAll("[data-i]:checked").length,ok=n===total;
+    btn.disabled=!ok;btn.textContent=ok?okLabel:okLabel+" ("+n+"/"+total+" ticked)";
+    if(hint)hint.style.display=ok?"none":"block";}
+  Array.prototype.forEach.call(m.querySelectorAll("[data-i]"),function(c){c.onchange=upd;});upd();
+}
+function rowModal(kind,r){
+  var items=(kind==="gmc"?r.items:[]);
+  var il=items.map(function(t,i){return '<div class="chk"><input type="checkbox" data-i="'+i+'" id="ci'+i+'"><label style="margin:0;color:var(--ink)" for="ci'+i+'">'+esc(t)+'</label></div>';}).join("");
+  var title=kind==="amc"?(r.site+" \u00b7 "+r.no+(r.serv?" \u00b7 "+r.serv:"")):(r.no+" \u00b7 "+r.client);
+  modal('<h2>Mark completed</h2><div class="sub">'+esc(title)+'</div>'
+    +(il?'<label>Scope items (tick each one done)</label>'+il
+      +'<div id="mGate" class="banner b-warn" style="margin-top:10px">Tick every item to mark this job completed. If work is not finished, leave it: nothing is updated.</div>':'')
+    +'<label>Completed date</label><input type="date" id="mDate" value="'+esc(S.today)+'" max="'+esc(S.today)+'">'
+    +'<label>JCC number (required)</label><input id="mJcc" autocapitalize="characters" autocomplete="off">'
+    +'<label>SR number</label><input id="mSr" autocapitalize="characters" autocomplete="off">'
+    +'<label>Remarks</label><textarea id="mRem"></textarea>'
+    +'<div class="sub" style="margin-top:10px">Completed by: <b>'+esc(cfg.name)+'</b></div>'
+    +'<div id="mErr" class="banner b-bad" style="display:none;margin-top:12px"></div>'
+    +'<div class="row"><button class="btn go" style="flex:1" id="mOk">Mark completed</button><button class="btn sec" id="mNo">Cancel</button></div>',
+  function(m){
+    el("mNo").onclick=function(){m.remove();};
+    if(items.length)gateItems(m,items.length,"mOk","Mark completed");
+    el("mOk").onclick=function(){
+      var jcc=el("mJcc").value.trim(),dd=el("mDate").value;
+      var bad=function(t){var e=el("mErr");e.textContent=t;e.style.display="block";};
+      if(!dd)return bad("Pick the completed date.");
+      if(!jcc)return bad("Enter the JCC number to mark this completed.");
+      var ev={rowKind:kind,rowId:r.id,doneDate:dd,jcc:jcc,sr:el("mSr").value.trim(),remarks:el("mRem").value.trim()};
+      if(items.length)ev.items={done:items.length,total:items.length};
+      m.remove();send("t_row",ev);
+    };
+  });
+}
 function completeModal(j){
   var items=(j.items||[]).map(function(t,i){return '<div class="chk"><input type="checkbox" data-i="'+i+'" id="ci'+i+'"><label style="margin:0;color:var(--ink)" for="ci'+i+'">'+esc(t)+'</label></div>';}).join("");
   modal('<h2>Complete job</h2><div class="sub">'+esc(j.site)+'</div>'
-    +(items?'<label>Scope items done</label>'+items:'')
+    +(items?'<label>Scope items done</label>'+items+'<div id="mGate" class="banner b-warn" style="margin-top:10px">Tick every item to complete this job. If work is not finished, leave it: nothing is updated.</div>':'')
     +'<label>JCC number (required)</label><input id="mJcc" autocapitalize="characters" autocomplete="off">'
     +'<label>SR number</label><input id="mSr" autocapitalize="characters" autocomplete="off">'
     +'<label>Remarks</label><textarea id="mRem"></textarea>'
@@ -274,6 +355,7 @@ function completeModal(j){
     +'<div class="row"><button class="btn go" style="flex:1" id="mOk">Complete</button><button class="btn sec" id="mNo">Cancel</button></div>',
   function(m){
     el("mNo").onclick=function(){m.remove();};
+    if(items)gateItems(m,(j.items||[]).length,"mOk","Complete");
     el("mOk").onclick=function(){
       var jcc=el("mJcc").value.trim();
       if(!jcc){var e=el("mErr");e.textContent="Enter the JCC number to complete this job.";e.style.display="block";return;}
