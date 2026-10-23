@@ -17,8 +17,8 @@ header{background:var(--navy);color:#fff;padding:12px 16px;padding-top:max(12px,
 header h1{font-size:17px;margin:0;flex:1}
 header small{display:block;font-weight:400;opacity:.8;font-size:12px}
 header button{background:rgba(255,255,255,.15);color:#fff;border:0;border-radius:8px;padding:8px 12px;font-size:14px}
-nav{display:flex;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5}
-nav button{flex:1;padding:14px 2px;border:0;background:none;font-size:14px;color:var(--mute);border-bottom:3px solid transparent}
+nav{display:flex;background:#fff;border-bottom:1px solid var(--line);position:sticky;top:0;z-index:5;overflow-x:auto}
+nav button{flex:1 0 auto;padding:14px 12px;border:0;background:none;font-size:14px;color:var(--mute);border-bottom:3px solid transparent}
 nav button[aria-selected=true]{color:var(--navy);border-bottom-color:var(--navy);font-weight:600}
 main{padding:14px 16px 90px;max-width:640px;margin:0 auto}
 .card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:14px;margin-bottom:12px}
@@ -29,6 +29,7 @@ main{padding:14px 16px 90px;max-width:640px;margin:0 auto}
 .p-In{background:var(--bluebg);color:var(--blue)}
 .p-Completed,.p-ok{background:var(--okbg);color:var(--ok)}
 .p-out{background:var(--warnbg);color:var(--warn)}
+.p-bad{background:var(--badbg);color:var(--bad)}
 .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}
 .btn{border:0;border-radius:10px;padding:14px 18px;font-size:16px;font-weight:600;background:var(--navy);color:#fff;min-height:48px}
 .btn.sec{background:#fff;color:var(--navy);border:1.5px solid var(--navy)}
@@ -83,7 +84,7 @@ function toast(m){var o=document.querySelector(".toast");if(o)o.remove();var t=d
   var c=lsGet(CFG_KEY,{});
   cfg.url=c.url||"";cfg.name=c.name||"";cfg.pin=c.pin||"";cfg.stay=c.stay!==false;
   try{var u=new URLSearchParams(location.search).get("u");
-    if(u&&/^https:\/\/script\.google\.com\//.test(u)){cfg.url=u;saveCfg();history.replaceState(null,"",location.pathname);}}catch(e){}
+    if(u&&/^https:\/\/script\.google\.com\//.test(u)){cfg.url=u;saveCfg();}}catch(e){}
 })();
 function saveCfg(){lsSet(CFG_KEY,{url:cfg.url,name:cfg.name,pin:cfg.stay?cfg.pin:"",stay:cfg.stay});}
 
@@ -164,13 +165,14 @@ function draw(){
   var h='<header><h1>'+esc(S.tech)+'<small>'+esc(S.today)+(online?'':' · offline')+(pq?' · '+pq+' waiting to send':'')+'</small></h1>'
     +'<button id="bRef">Refresh</button><button id="bOut">Log out</button></header>'
     +'<nav><button data-t="jobs" aria-selected="'+(tab==="jobs")+'">Jobs</button>'
+    +'<button data-t="duty" aria-selected="'+(tab==="duty")+'">Duty</button>'
     +'<button data-t="amc" aria-selected="'+(tab==="amc")+'">AMC</button>'
     +'<button data-t="gmc" aria-selected="'+(tab==="gmc")+'">GMC</button>'
     +'<button data-t="tools" aria-selected="'+(tab==="tools")+'">Tools</button>'
     +'<button data-t="hist" aria-selected="'+(tab==="hist")+'">History</button></nav><main>';
   if(!online)h+='<div class="banner b-warn">No signal. Your updates are saved on this phone and will send when the signal returns.</div>';
   if(held.length&&tab!=="tools")h+='<div class="banner b-warn">You still hold: <b>'+held.map(function(t){return esc(t.name);}).join(", ")+'</b>. Return it in the Tools tab when you finish.</div>';
-  h+= tab==="jobs"?viewJobs():(tab==="tools"?viewTools():(tab==="hist"?viewHist():viewList(tab)));
+  h+= tab==="jobs"?viewJobs():(tab==="tools"?viewTools():(tab==="hist"?viewHist():(tab==="duty"?viewDuty():viewList(tab))));
   h+='</main>';
   app.innerHTML=h;
   wire();
@@ -202,58 +204,101 @@ function doLogin(){
   }).catch(function(){cfg.pin="";loginErr="No connection. Check your signal.";drawLogin();});
 }
 
+function pillCls(st){
+  if(st==="Completed")return "p-Completed";
+  if(st==="Submitted"||st==="In Progress"||st==="Ongoing")return "p-In";
+  if(st==="Balance Work")return "p-out";
+  if(st==="Returned")return "p-bad";
+  return "p-Pending";
+}
+function linkedRow(j){
+  var p=String(j.ref||"").split("|");
+  if(p.length<2||(p[0]!=="amc"&&p[0]!=="gmc"))return null;
+  var r=(S[p[0]]||[]).filter(function(y){return y.id===p[1];})[0];
+  return r?{kind:p[0],row:r}:null;
+}
 function viewJobs(){
   if(!S.jobs.length)return '<div class="empty">No jobs assigned to you for today.<br>Pull Refresh if your supervisor just added one.</div>';
   return S.jobs.map(function(j){
-    var v=jobView(j);
-    var cls=v.st==="In Progress"?"p-In":"p-"+v.st;
+    var v=jobView(j),L=linkedRow(j),rv=L?rowView(L.kind,L.row):null,st=v.st;
+    if(rv&&(rv.st==="Submitted"||rv.st==="Completed"||rv.st==="Balance Work"||rv.st==="Returned"))st=rv.st;
     var btn="";
-    if(v.st==="Pending")btn='<button class="btn" data-start="'+esc(j.id)+'">Start</button>';
-    if(v.st!=="Completed")btn+='<button class="btn go" data-done="'+esc(j.id)+'">Complete</button>';
-    return '<div class="card"><div style="display:flex;justify-content:space-between;gap:8px"><h3>'+esc(j.site||"Job")+'</h3><span class="pill '+cls+'">'+esc(v.st)+'</span></div>'
-      +'<div class="sub">'+esc(dshort(j.date))+(j.activity?' · '+esc(j.activity):'')+(j.location?' · '+esc(j.location):'')+'</div>'
+    if(v.st==="Pending"&&st==="Pending")btn='<button class="btn" data-start="'+esc(j.id)+'">Start</button>';
+    if(st!=="Completed"&&st!=="Submitted")btn+='<button class="btn go" data-done="'+esc(j.id)+'">'+(L?"Update / complete":"Complete")+'</button>';
+    return '<div class="card"><div style="display:flex;justify-content:space-between;gap:8px"><h3>'+esc(j.site||"Job")+'</h3><span class="pill '+pillCls(st)+'">'+esc(st)+'</span></div>'
+      +'<div class="sub">'+esc(dshort(j.date))+(j.activity?' \u00b7 '+esc(j.activity):'')+(j.location?' \u00b7 '+esc(j.location):'')+'</div>'
       +(j.info?'<div style="margin-top:6px">'+esc(j.info)+'</div>':'')
       +(j.items&&j.items.length?'<div class="sub" style="margin-top:6px">Scope: '+j.items.length+' item(s)</div>':'')
       +(j.remarks?'<div class="sub" style="margin-top:6px">Note: '+esc(j.remarks)+'</div>':'')
-      +(v.st==="Completed"&&v.jcc?'<div style="margin-top:8px"><b>JCC:</b> '+esc(v.jcc)+(j.sr?' · <b>SR:</b> '+esc(j.sr):'')+'</div>':'')
-      +(v.pend?'<div class="pend">Waiting to send…</div>':'')
+      +(rv?rowNotes(rv):'')
+      +(!L&&st==="Completed"&&v.jcc?'<div style="margin-top:8px"><b>JCC:</b> '+esc(v.jcc)+(j.sr?' \u00b7 <b>SR:</b> '+esc(j.sr):'')+'</div>':'')
+      +(v.pend?'<div class="pend">Waiting to send\u2026</div>':'')
       +(btn?'<div class="row">'+btn+'</div>':'')+'</div>';
   }).join("");
 }
 function rowView(kind,r){
-  var st=r.status,jcc=r.jcc,dd=r.doneDate,by=r.by,pend=false;
+  var o={st:r.status,jcc:r.jcc,dd:r.doneDate,by:r.by,pend:false,remaining:r.remaining||"",note:r.note||"",comment:r.comment||"",
+    result:r.result||"",progress:r.progress||""};
   queue().forEach(function(x){
-    if(x.action==="t_row"&&x.ev.rowKind===kind&&x.ev.rowId===r.id){pend=true;st="Completed";jcc=x.ev.jcc;dd=x.ev.doneDate;by=cfg.name;}});
-  return {st:st,jcc:jcc,dd:dd,by:by,pend:pend,done:st==="Completed"};
+    if(x.action==="t_row"&&x.ev.rowKind===kind&&x.ev.rowId===r.id){
+      o.pend=true;o.st="Submitted";o.jcc=x.ev.jcc;o.dd=x.ev.doneDate;o.by=cfg.name;o.result=x.ev.result||"complete";o.remaining=x.ev.remaining||"";o.comment="";}});
+  o.done=o.st==="Completed";
+  return o;
+}
+/* the lines under a job card that explain where it stands */
+function rowNotes(v){
+  var h="";
+  if(v.st==="Returned")h+='<div class="banner b-bad" style="margin-top:8px">Returned by supervisor'+(v.comment?': '+esc(v.comment):'')+'. Please update again.</div>';
+  if(v.st==="Submitted")h+='<div class="banner b-info" style="margin-top:8px">'+(v.result==="partial"?'Partly done sent. ':'Sent as completed. ')+'Waiting for your supervisor to verify.'+(v.remaining?'<br>Remaining: '+esc(v.remaining):'')+'</div>';
+  if(v.st==="Balance Work")h+='<div class="banner b-warn" style="margin-top:8px">Balance work'+(v.remaining?': '+esc(v.remaining):'')+'</div>';
+  if(v.progress)h+='<div class="sub" style="margin-top:8px"><b>Supervisor note:</b> '+esc(v.progress)+'</div>';
+  if(v.st==="Completed")h+='<div style="margin-top:8px">'+(v.dd?'<b>Done:</b> '+esc(dshort(v.dd)):'')+(v.jcc?' \u00b7 <b>JCC:</b> '+esc(v.jcc):'')+(v.by?' \u00b7 <b>By:</b> '+esc(v.by):'')+'</div>';
+  return h;
 }
 function viewList(kind){
-  var rows=S[kind]||[];
   return '<input type="search" id="lq" placeholder="Search '+(kind==="amc"?"site or AMC no":"GMC no, client or job")+'" value="'+esc(LQ[kind])+'" autocomplete="off">'
-    +'<select id="lf" style="margin-top:8px"><option value="open"'+(LF[kind]==="open"?" selected":"")+'>Not completed</option>'
-    +'<option value="done"'+(LF[kind]==="done"?" selected":"")+'>Completed</option><option value="all"'+(LF[kind]==="all"?" selected":"")+'>All</option></select>'
-    +'<div id="lst" style="margin-top:12px">'+listHtml(kind)+'</div>';
+    +'<select id="lf" style="margin-top:8px">'
+    +[["open","Not completed"],["sub","Waiting for verification"],["done","Completed"],["all","All"]].map(function(o){return '<option value="'+o[0]+'"'+(LF[kind]===o[0]?" selected":"")+'>'+o[1]+'</option>';}).join("")
+    +'</select><div id="lst" style="margin-top:12px">'+listHtml(kind)+'</div>';
 }
 function listHtml(kind){
   var q=LQ[kind].trim().toLowerCase(),f=LF[kind],out=[],total=0;
   (S[kind]||[]).forEach(function(r){
     var v=rowView(kind,r);
-    if(f==="open"&&v.done)return;if(f==="done"&&!v.done)return;
+    if(f==="open"&&v.done)return;if(f==="done"&&!v.done)return;if(f==="sub"&&v.st!=="Submitted")return;
     var hay=(kind==="amc"?[r.no,r.site,r.system,r.serv]:[r.no,r.client,r.desc]).join(" ").toLowerCase();
     if(q&&hay.indexOf(q)<0)return;
     total++;if(out.length>=80)return;
-    var cls=v.st==="Completed"?"p-Completed":((v.st==="Ongoing"||v.st==="Balance Work")?"p-In":"p-Pending");
     var title=kind==="amc"?(r.site||"AMC"):(r.client||"GMC");
     var line=kind==="amc"?(esc(r.no)+(r.serv?" \u00b7 "+esc(r.serv):"")+(r.system?" \u00b7 "+esc(r.system):"")+(r.sched?" \u00b7 "+esc(dshort(r.sched)):""))
       :(esc(r.no)+(r.desc?" \u2014 "+esc(r.desc):"")+(r.sched?" \u00b7 "+esc(dshort(r.sched)):""));
-    out.push('<div class="card"><div style="display:flex;justify-content:space-between;gap:8px"><h3>'+esc(title)+'</h3><span class="pill '+cls+'">'+esc(v.st)+'</span></div>'
+    out.push('<div class="card"><div style="display:flex;justify-content:space-between;gap:8px"><h3>'+esc(title)+'</h3><span class="pill '+pillCls(v.st)+'">'+esc(v.st)+'</span></div>'
       +'<div class="sub">'+line+'</div>'
       +(kind==="gmc"&&r.items.length?'<div class="sub" style="margin-top:4px">Scope: '+r.items.length+' item(s)</div>':'')
-      +(v.done?'<div style="margin-top:8px">'+(v.dd?'<b>Done:</b> '+esc(dshort(v.dd)):'')+(v.jcc?' \u00b7 <b>JCC:</b> '+esc(v.jcc):'')+(v.by?' \u00b7 <b>By:</b> '+esc(v.by):'')+'</div>':'')
+      +rowNotes(v)
       +(v.pend?'<div class="pend">Waiting to send\u2026</div>':'')
-      +(v.done?'':'<div class="row"><button class="btn go" data-row="'+kind+'|'+esc(r.id)+'">Mark completed</button></div>')+'</div>');
+      +((v.done||v.st==="Submitted")?'':'<div class="row"><button class="btn go" data-row="'+kind+'|'+esc(r.id)+'">Update / mark completed</button></div>')+'</div>');
   });
   if(!out.length)return '<div class="empty">Nothing found.</div>';
   return out.join("")+(total>80?'<div class="empty">Showing 80 of '+total+'. Use search to find the rest.</div>':'');
+}
+function viewDuty(){
+  var T=S.team||[];
+  if(!T.length)return '<div class="empty">No duty schedule yet.</div>';
+  var me=String(cfg.name||"").toLowerCase();
+  return T.map(function(d,i){
+    var h='<div class="card"><h3>'+(i===0?"Today":"Tomorrow")+' \u00b7 '+esc(dshort(d.date))+'</h3>';
+    h+=d.absent.length?'<div class="banner b-bad" style="margin-top:10px"><b>Absent / on leave:</b> '+d.absent.map(esc).join(", ")+'</div>'
+      :'<div class="sub" style="margin-top:6px">No one on leave.</div>';
+    if(d.rows.length){
+      h+=d.rows.map(function(r){
+        var mine=r.techs.some(function(n){return String(n).toLowerCase()===me;});
+        return '<div class="hist"'+(mine?' style="background:var(--bluebg);margin:0 -8px;padding:10px 8px;border-radius:8px"':'')+'><b>'+r.techs.map(esc).join(", ")+(mine?' (you)':'')+'</b>'
+          +'<div>'+esc(r.site||"\u2014")+'</div><div class="sub">'+esc(r.activity)+(r.location?' \u00b7 '+esc(r.location):'')+'</div></div>';}).join("");
+    }else h+='<div class="sub" style="margin-top:6px">No duty entered yet.</div>';
+    if(d.free.length)h+='<div class="sub" style="margin-top:10px"><b>No duty assigned:</b> '+d.free.map(esc).join(", ")+'</div>';
+    return h+'</div>';
+  }).join("");
 }
 function viewTools(){
   if(!S.tools.length)return '<div class="empty">No tools set up yet.</div>';
@@ -272,7 +317,8 @@ function viewTools(){
 function viewHist(){
   if(!S.history.length&&!queue().length)return '<div class="empty">Nothing yet this month.</div>';
   return '<div class="card">'+S.history.map(function(e){
-    var what=e.kind==="row"?"Completed "+(e.rowKind==="amc"?"AMC ":"GMC ")+esc(e.no||"")+" \u2014 "+esc(e.site||"")+" \u00b7 JCC "+esc(e.jcc||"")+(e.doneDate?" \u00b7 "+esc(dshort(e.doneDate)):"")
+    var what=e.kind==="verify"?(e.ok?"Verified by supervisor":"Returned by supervisor")+" \u2014 "+(e.rowKind==="amc"?"AMC ":"GMC ")+esc(e.no||"")+" \u2014 "+esc(e.site||"")+(e.comment?" \u00b7 "+esc(e.comment):"")
+      :e.kind==="row"?(e.result==="partial"?"Sent partly done ":"Sent completed ")+(e.rowKind==="amc"?"AMC ":"GMC ")+esc(e.no||"")+" \u2014 "+esc(e.site||"")+(e.jcc?" \u00b7 JCC "+esc(e.jcc):"")+(e.remaining?" \u00b7 remaining: "+esc(e.remaining):"")+(e.doneDate?" \u00b7 "+esc(dshort(e.doneDate)):"")
       :e.kind==="job"?(e.act==="start"?"Started":"Completed")+" — "+esc(e.site||"job")+(e.jcc?" · JCC "+esc(e.jcc):"")+(e.items&&e.items.total?" · "+e.items.done+"/"+e.items.total+" items":"")
       :(e.act==="out"?"Took out":"Returned")+" "+esc(e.tool)+(e.site?" · "+esc(e.site):"")+(e.cond==="Damaged"?" · DAMAGED":"");
     return '<div class="hist"><b>'+what+'</b><div class="sub">'+esc(tm(e.ts))+'</div></div>';
@@ -289,7 +335,7 @@ function wire(){
   Array.prototype.forEach.call(document.querySelectorAll("nav button"),function(x){x.onclick=function(){tab=x.dataset.t;draw();};});
   Array.prototype.forEach.call(document.querySelectorAll("[data-start]"),function(x){x.onclick=function(){
     var j=findJob(x.dataset.start);send("t_job",{act:"start",dutyId:j.id,ref:j.ref,site:j.site});};});
-  Array.prototype.forEach.call(document.querySelectorAll("[data-done]"),function(x){x.onclick=function(){completeModal(findJob(x.dataset.done));};});
+  Array.prototype.forEach.call(document.querySelectorAll("[data-done]"),function(x){x.onclick=function(){var j=findJob(x.dataset.done),L=linkedRow(j);if(L)rowModal(L.kind,L.row);else completeModal(j);};});
   var lq=el("lq");
   if(lq){lq.oninput=function(){LQ[tab]=lq.value;el("lst").innerHTML=listHtml(tab);wireRows();};
     el("lf").onchange=function(){LF[tab]=el("lf").value;el("lst").innerHTML=listHtml(tab);wireRows();};wireRows();}
@@ -320,26 +366,45 @@ function rowModal(kind,r){
   var items=(kind==="gmc"?r.items:[]);
   var il=items.map(function(t,i){return '<div class="chk"><input type="checkbox" data-i="'+i+'" id="ci'+i+'"><label style="margin:0;color:var(--ink)" for="ci'+i+'">'+esc(t)+'</label></div>';}).join("");
   var title=kind==="amc"?(r.site+" \u00b7 "+r.no+(r.serv?" \u00b7 "+r.serv:"")):(r.no+" \u00b7 "+r.client);
-  modal('<h2>Mark completed</h2><div class="sub">'+esc(title)+'</div>'
-    +(il?'<label>Scope items (tick each one done)</label>'+il
-      +'<div id="mGate" class="banner b-warn" style="margin-top:10px">Tick every item to mark this job completed. If work is not finished, leave it: nothing is updated.</div>':'')
-    +'<label>Completed date</label><input type="date" id="mDate" value="'+esc(S.today)+'" max="'+esc(S.today)+'">'
-    +'<label>JCC number (required)</label><input id="mJcc" autocapitalize="characters" autocomplete="off">'
+  modal('<h2>Update job</h2><div class="sub">'+esc(title)+'</div>'
+    +'<label>Work status</label><select id="mRes"><option value="complete">All done (completed)</option><option value="partial">Partly done (some remaining)</option></select>'
+    +(il?'<label>Scope items (tick each one done)</label>'+il:'')
+    +'<div id="mGate" class="banner b-warn" style="margin-top:10px;display:none">Tick every item to mark this job completed. Or choose Partly done and write what is remaining.</div>'
+    +'<div id="mRemBox" style="display:none"><label>What is remaining (required)</label><textarea id="mRemain"></textarea></div>'
+    +'<label>Date of work</label><input type="date" id="mDate" value="'+esc(S.today)+'" max="'+esc(S.today)+'">'
+    +'<label id="mJccL">JCC number (required when all done)</label><input id="mJcc" autocapitalize="characters" autocomplete="off">'
     +'<label>SR number</label><input id="mSr" autocapitalize="characters" autocomplete="off">'
-    +'<label>Remarks</label><textarea id="mRem"></textarea>'
-    +'<div class="sub" style="margin-top:10px">Completed by: <b>'+esc(cfg.name)+'</b></div>'
+    +'<label>What was done / remarks</label><textarea id="mRem"></textarea>'
+    +'<div class="sub" style="margin-top:10px">Updated by: <b>'+esc(cfg.name)+'</b>. Your supervisor checks it before it moves to Completed.</div>'
     +'<div id="mErr" class="banner b-bad" style="display:none;margin-top:12px"></div>'
     +'<div class="row"><button class="btn go" style="flex:1" id="mOk">Mark completed</button><button class="btn sec" id="mNo">Cancel</button></div>',
   function(m){
+    var touched=false,btn=el("mOk");
+    el("mRemain").oninput=function(){touched=true;};
+    function upd(){
+      var part=el("mRes").value==="partial",boxes=m.querySelectorAll("[data-i]"),n=m.querySelectorAll("[data-i]:checked").length;
+      var ok=part||!items.length||n===items.length;
+      btn.disabled=!ok;
+      btn.textContent=part?"Send update":(ok?"Mark completed":"Mark completed ("+n+"/"+items.length+" ticked)");
+      el("mRemBox").style.display=part?"block":"none";
+      el("mGate").style.display=(!part&&items.length&&!ok)?"block":"none";
+      el("mJccL").textContent=part?"JCC number (if you have it)":"JCC number (required when all done)";
+      if(part&&items.length&&!touched){
+        var left=[];Array.prototype.forEach.call(boxes,function(c){if(!c.checked)left.push(items[+c.dataset.i]);});
+        el("mRemain").value=left.join("; ");}
+    }
+    el("mRes").onchange=upd;
+    Array.prototype.forEach.call(m.querySelectorAll("[data-i]"),function(c){c.onchange=upd;});
+    upd();
     el("mNo").onclick=function(){m.remove();};
-    if(items.length)gateItems(m,items.length,"mOk","Mark completed");
-    el("mOk").onclick=function(){
-      var jcc=el("mJcc").value.trim(),dd=el("mDate").value;
+    btn.onclick=function(){
+      var part=el("mRes").value==="partial",jcc=el("mJcc").value.trim(),dd=el("mDate").value,rem=el("mRemain").value.trim();
       var bad=function(t){var e=el("mErr");e.textContent=t;e.style.display="block";};
-      if(!dd)return bad("Pick the completed date.");
-      if(!jcc)return bad("Enter the JCC number to mark this completed.");
-      var ev={rowKind:kind,rowId:r.id,doneDate:dd,jcc:jcc,sr:el("mSr").value.trim(),remarks:el("mRem").value.trim()};
-      if(items.length)ev.items={done:items.length,total:items.length};
+      if(!dd)return bad("Pick the date.");
+      if(part&&!rem)return bad("Write what is remaining.");
+      if(!part&&!jcc)return bad("Enter the JCC number to mark this completed.");
+      var ev={rowKind:kind,rowId:r.id,result:part?"partial":"complete",doneDate:dd,jcc:jcc,sr:el("mSr").value.trim(),remarks:el("mRem").value.trim(),remaining:part?rem:""};
+      if(items.length)ev.items={done:m.querySelectorAll("[data-i]:checked").length,total:items.length};
       m.remove();send("t_row",ev);
     };
   });

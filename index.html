@@ -777,6 +777,7 @@ function techFetch(loud){
     TECHD.err="";TECHD.events=r.events||[];TECHD.tools=r.tools||[];TECHD.pins=r.pins||[];
     TECHD.now=r.now||Date.now();TECHD.loaded=Date.now();
     var n=techApply();
+    techBadge();
     if(tab==="tech")render();
     if(loud&&!n)toast("Technician updates are up to date");
     return true;
@@ -785,34 +786,66 @@ function techFetch(loud){
     if(loud)toast("No connection");
     return false;});}
 
-/* a technician finishing a job updates the matching AMC / GMC row in your list, once per update */
+/* a technician starting a job moves the row to Ongoing. Completion never applies by itself: you verify it first. */
 function techApply(){
   var seen=techApplied(),set={};seen.forEach(function(i){set[i]=1;});
   var changed=0,fresh=[];
   TECHD.events.slice().sort(function(a,b){return a.ts-b.ts;}).forEach(function(e){
-    if((e.kind!=="job"&&e.kind!=="row")||set[e.id])return;
+    if(e.kind!=="job"||e.act!=="start"||set[e.id])return;
     fresh.push(e.id);
-    var kind,rid;
-    if(e.kind==="row"){kind=e.rowKind;rid=e.rowId;}
-    else{var p=String(e.ref||"").split("|");if(p.length<2)return;kind=p[0];rid=p[1];}
-    var r=kind==="amc"?byId(state.amc,rid):(kind==="gmc"?byId(state.gmc,rid):null);
-    if(!r)return;
-    var day=e.doneDate||iso(new Date(e.ts));
-    if(e.act==="start"){
-      if(r.status==="Open"){r.status="Ongoing";changed++;}
-    }else if(e.act==="complete"){
-      if(r.status!=="Completed"){r.status="Completed";changed++;}
-      if(!r.doneDate){r.doneDate=day;changed++;}
-      if(!r.doneBy&&e.tech){r.doneBy=e.tech;changed++;}
-      if(!r.jccNo&&e.jcc){r.jccNo=e.jcc;changed++;}
-      if(kind==="gmc"){if(!r.jccDate&&e.jcc){r.jccDate=day;changed++;}}
-      else if(!r.srNo&&e.sr){r.srNo=e.sr;changed++;}
-      if(e.remarks){var fld=kind==="gmc"?"remarks":"notes";
-        if(String(r[fld]||"").indexOf(e.remarks)<0){r[fld]=(r[fld]?r[fld]+"\n":"")+e.tech+": "+e.remarks;changed++;}}
-    }});
+    var p=String(e.ref||"").split("|");if(p.length<2)return;
+    var r=p[0]==="amc"?byId(state.amc,p[1]):(p[0]==="gmc"?byId(state.gmc,p[1]):null);
+    if(r&&r.status==="Open"){r.status="Ongoing";changed++;}});
   if(fresh.length)techAppliedSave(seen.concat(fresh));
   if(changed){commit(changed+" update(s) from technicians applied");}
   return changed;}
+
+/* updates sent by technicians that you have not verified yet */
+function techPending(){
+  var m={};
+  TECHD.events.slice().sort(function(a,b){return a.ts-b.ts;}).forEach(function(e){
+    var k=e.rowKind+"|"+e.rowId;
+    if(e.kind==="row")m[k]=e;else if(e.kind==="verify")delete m[k];});
+  return Object.keys(m).map(function(k){return m[k];}).sort(function(a,b){return a.ts-b.ts;});}
+function techBadge(){
+  var b=document.querySelector('[data-tab="tech"]');if(!b)return;
+  var n=techPending().length;
+  b.textContent="Tech"+(n?" ("+n+")":"");}
+function techVerifyModal(e,ok){
+  var r=e.rowKind==="amc"?byId(state.amc,e.rowId):byId(state.gmc,e.rowId);
+  if(!r){toast("That job is no longer in your list");return;}
+  var part=e.result==="partial";
+  if(ok){
+    openModal(part?"Accept partly done":"Verify completed",
+      '<p><b>'+esc(e.site||"")+'</b> \u00b7 '+esc(e.no||"")+'</p>'
+      +'<p class="hint">By '+esc(e.tech)+' \u00b7 '+esc(e.doneDate||"")+(e.jcc?' \u00b7 JCC '+esc(e.jcc):'')+(e.sr?' \u00b7 SR '+esc(e.sr):'')+'</p>'
+      +(e.remarks?'<p>Done: '+esc(e.remarks)+'</p>':'')
+      +(part?'<p><b>Remaining:</b> '+esc(e.remaining||"")+'</p><p class="hint">The row will be marked '+(e.rowKind==="gmc"?"Balance Work":"Ongoing")+' and the remaining work is saved in the progress remark.</p>'
+        :'<p class="hint">The row will be marked Completed with this date, JCC and the technician\'s name.</p>'),function(){
+        techApplyRow(r,e);
+        techPost({action:"a_verify",rowKind:e.rowKind,rowId:e.rowId,ok:true}).then(function(x){
+          if(x&&x.ok){closeModal();commit(part?"Partly done accepted":"Verified and completed");techFetch(false);}
+          else mErr((x&&x.error)||"Could not save");}).catch(function(){mErr("No connection");});});
+  }else{
+    openModal("Return to technician",'<p><b>'+esc(e.site||"")+'</b> \u00b7 '+esc(e.no||"")+'</p>'
+      +'<div class="field"><label>What must be corrected</label><textarea id="fRet"></textarea></div>',function(){
+        var c=val("fRet");if(!c)return mErr("Write what the technician must fix.");
+        techPost({action:"a_verify",rowKind:e.rowKind,rowId:e.rowId,ok:false,comment:c}).then(function(x){
+          if(x&&x.ok){closeModal();toast("Returned to "+e.tech);techFetch(false);}
+          else mErr((x&&x.error)||"Could not save");}).catch(function(){mErr("No connection");});});}}
+function techApplyRow(r,e){
+  var kind=e.rowKind,day=e.doneDate||iso(new Date(e.ts)),note=(e.remarks||"");
+  if(e.result==="partial"){
+    r.status=kind==="gmc"?"Balance Work":"Ongoing";
+    r.progress=(fmt(day)+" "+e.tech+(note?" did: "+note:"")+" \u2014 remaining: "+(e.remaining||"")).trim();
+    if(e.jcc&&!r.jccNo)r.jccNo=e.jcc;
+  }else{
+    r.status="Completed";r.doneDate=day;r.doneBy=e.tech;
+    if(e.jcc)r.jccNo=e.jcc;
+    if(kind==="gmc"){if(e.jcc)r.jccDate=day;}else if(e.sr)r.srNo=e.sr;
+    if(note){var f=kind==="gmc"?"remarks":"notes";
+      if(String(r[f]||"").indexOf(note)<0)r[f]=(r[f]?r[f]+"\n":"")+e.tech+": "+note;}
+    if(r.progress)r.progress="";}}
 
 function techAgo(ts){return ts?agoText(ts):"";}
 function techClock(ts){return ts?new Date(ts).toLocaleString("en-GB",{day:"2-digit",month:"short",hour:"2-digit",minute:"2-digit",hour12:false}):"";}
@@ -830,6 +863,26 @@ function viewTech(){
   if(!TECHD.loaded&&!TECHD.busy&&!TECHD.err)techFetch(false);
   var h='';
   if(TECHD.err)h+='<div class="card"><div class="body"><div class="err">'+esc(TECHD.err)+'</div></div></div>';
+
+  // waiting for verification
+  var pend=techPending();
+  h+='<div class="card"><h2>Waiting for your verification <span class="count">'+pend.length+'</span></h2>';
+  if(!pend.length)h+='<div class="empty"><b>Nothing waiting</b>Completed and partly done updates from technicians appear here.</div></div>';
+  else{
+    h+='<div class="body flush"><div class="tbl-wrap"><table class="rsp"><thead><tr><th>Technician</th><th>Job</th><th>Update</th><th>When</th><th></th></tr></thead><tbody>';
+    pend.forEach(function(e){
+      var k=e.rowKind+"|"+e.rowId,part=e.result==="partial";
+      h+='<tr><td data-l="Technician">'+esc(e.tech)+'</td>'
+        +'<td data-l="Job"><b>'+esc(e.site||"")+'</b><span class="sub">'+(e.rowKind==="amc"?"AMC ":"GMC ")+esc(e.no||"")+'</span></td>'
+        +'<td data-l="Update"><span class="pill'+(part?'':' ok')+'">'+(part?'Partly done':'Completed')+'</span> '
+        +(e.doneDate?esc(e.doneDate):'')+(e.jcc?' \u00b7 JCC '+esc(e.jcc):'')+(e.sr?' \u00b7 SR '+esc(e.sr):'')
+        +(e.remarks?'<span class="sub">Done: '+esc(e.remarks)+'</span>':'')
+        +(part&&e.remaining?'<span class="sub">Remaining: '+esc(e.remaining)+'</span>':'')
+        +(e.items&&e.items.total&&!part?'<span class="sub">All '+e.items.total+' items ticked</span>':'')+'</td>'
+        +'<td data-l="When">'+esc(techClock(e.ts))+'</td>'
+        +'<td data-l=""><button class="btn" data-vok="'+esc(k)+'">'+(part?'Accept':'Verify')+'</button> '
+        +'<button class="link" data-vno="'+esc(k)+'">Return</button></td></tr>';});
+    h+='</tbody></table></div></div></div>';}
 
   // tools
   h+='<div class="card"><h2>Tools <span class="count">'+TECHD.tools.length+'</span></h2><div class="body flush"><div class="tbl-wrap"><table class="rsp"><thead><tr>'
@@ -880,8 +933,10 @@ function viewTech(){
   else{
     h+='<div class="body flush"><div class="tbl-wrap"><table class="rsp"><thead><tr><th>When</th><th>Technician</th><th>What</th></tr></thead><tbody>';
     ev.forEach(function(e){
-      var what=e.kind==="row"
-        ?("Completed "+(e.rowKind==="amc"?"AMC ":"GMC ")+(e.no||"")+" \u2014 "+(e.site||"")+" \u00b7 JCC "+(e.jcc||"")+(e.doneDate?" \u00b7 "+e.doneDate:"")+(e.items&&e.items.total?" \u00b7 all "+e.items.total+" items":"")+(e.remarks?" \u00b7 "+e.remarks:""))
+      var what=e.kind==="verify"
+        ?((e.ok?"Verified ":"Returned ")+(e.rowKind==="amc"?"AMC ":"GMC ")+(e.no||"")+" \u2014 "+(e.site||"")+(e.comment?" \u00b7 "+e.comment:""))
+        :e.kind==="row"
+        ?((e.result==="partial"?"Partly done ":"Completed ")+(e.rowKind==="amc"?"AMC ":"GMC ")+(e.no||"")+" \u2014 "+(e.site||"")+(e.remaining?" \u00b7 remaining: "+e.remaining:"")+" \u00b7 JCC "+(e.jcc||"")+(e.doneDate?" \u00b7 "+e.doneDate:"")+(e.items&&e.items.total?" \u00b7 all "+e.items.total+" items":"")+(e.remarks?" \u00b7 "+e.remarks:""))
         :e.kind==="job"
         ?((e.act==="start"?"Started":"Completed")+" — "+(e.site||"job")+(e.jcc?" · JCC "+e.jcc:"")+(e.sr?" · SR "+e.sr:"")+(e.items&&e.items.total?" · "+e.items.done+"/"+e.items.total+" items":"")+(e.remarks?" · "+e.remarks:""))
         :((e.act==="out"?"Took out ":"Returned ")+e.tool+(e.site?" · "+e.site:"")+(e.cond==="Damaged"?" · DAMAGED":"")+(e.note?" · "+e.note:""));
@@ -895,6 +950,10 @@ function techWire(){
   var b=document.getElementById("tRef");if(b)b.onclick=function(){techFetch(true);};
   b=document.getElementById("tLink");if(b)b.onclick=function(){copyText(techLink());};
   b=document.getElementById("tToolEdit");if(b)b.onclick=toolEditModal;
+  var pl=techPending();
+  var pick=function(k){return pl.filter(function(e){return e.rowKind+"|"+e.rowId===k;})[0];};
+  q("[data-vok]",function(x){x.onclick=function(){var e=pick(x.dataset.vok);if(e)techVerifyModal(e,true);};});
+  q("[data-vno]",function(x){x.onclick=function(){var e=pick(x.dataset.vno);if(e)techVerifyModal(e,false);};});
   q("[data-tret]",function(x){x.onclick=function(){
     if(!confirm("Mark this tool as returned?"))return;
     techPost({action:"a_return",toolId:x.dataset.tret}).then(function(r){
@@ -1433,7 +1492,7 @@ function viewGmc(){
     +'<span class="count">newest number: '+esc(maxGmc())+'</span></h2>'
     +'<div class="body flush"><div class="tbl-wrap"><table id="gmcTbl" class="rsp"><thead><tr>'
     +'<th>GMC no</th><th>Client</th><th>Job description</th><th>Month</th><th>Scheduled</th><th>Status</th>'
-    +'<th>Report</th><th>QTN</th><th>JCC no</th><th>JCC date</th><th>Done by</th><th></th></tr></thead><tbody>';
+    +'<th>Report</th><th>QTN</th><th>JCC no</th><th>JCC date</th><th>Done by</th><th>Progress remark</th><th></th></tr></thead><tbody>';
   rows.forEach(function(g){
     h+='<tr data-row="'+esc((g.gmcNo+" "+g.clientRaw+" "+g.desc+" "+g.jccNo).toLowerCase())+'" data-stat="'+esc(g.status)+'" data-month="'+esc(g.month||"")+'">'
       +'<td class="num site-name" data-l="GMC no">'+esc(g.gmcNo)+'</td><td data-l="Client">'+esc(g.clientRaw)+'</td>'
@@ -1443,6 +1502,7 @@ function viewGmc(){
       +'<td data-l="Report">'+reportSel("gmc",g)+'</td><td data-l="QTN">'+qtnSel("gmc",g)+'</td>'
       +'<td class="num" data-l="JCC no">'+esc(g.jccNo||"\u2014")+'</td><td class="num" data-l="JCC date">'+fmt(g.jccDate)+'</td>'
       +'<td data-l="Done by">'+esc(g.doneBy||"\u2014")+'</td>'
+      +'<td data-l="Progress remark"><input class="inline" placeholder="e.g. cabling done, devices pending" value="'+esc(g.progress||"")+'" data-set="gmc|'+g.id+'|progress"></td>'
       +'<td data-l=""><button class="link" data-open="gmc|'+g.id+'">Open</button>'
       +'<button class="link" data-up="gmc|'+g.id+'">Report</button></td></tr>';});
   return h+'</tbody></table></div></div></div>';
@@ -2710,7 +2770,7 @@ function amcModal(a){
       system:val("fSys"),serviceNo:val("fServ"),client:val("fClient")||val("fSite"),location:val("fLoc"),
       freq:a.freq,contractStatus:val("fCs"),status:val("fStat"),schedDate:val("fSched"),doneDate:val("fDone"),
       report:val("fRep"),qtn:val("fQtn"),techs:checked("fTechs"),srNo:val("fSr"),jccNo:val("fJccA"),doneBy:val("fBy"),techText:val("fTx"),
-      remind:+val("fRm"),notes:val("fNotes")};
+      remind:+val("fRm"),notes:val("fNotes"),progress:(a.progress||"")};
     if(a.id){for(var i=0;i<state.amc.length;i++)if(state.amc[i].id===a.id)state.amc[i]=rec;}
     else state.amc.push(rec);
     draftDel("amc-"+(a.id||"new"));closeModal();commit("Saved");
@@ -2748,13 +2808,14 @@ function gmcModal(g){
       +esc(gcalLink({date:g.schedDate,title:"GMC "+g.gmcNo+" \u2014 "+g.client,desc:g.desc,loc:g.location}))
       +'">Add this job to Google Calendar</a></p>':"")
     +'<div class="field"><label>Technicians</label>'+checksHtml("fTechs",g.techs)+'</div>'
-    +'<div class="field"><label>Remarks</label><textarea id="fRem">'+esc(g.remarks||"")+'</textarea></div>';
+    +'<div class="field"><label>Progress remark (technicians can see this)</label><textarea id="fProg">'+esc(g.progress||"")+'</textarea></div>'
+    +'<div class="field"><label>Remarks (private, technicians cannot see)</label><textarea id="fRem">'+esc(g.remarks||"")+'</textarea></div>';
   openModal(isNew?"Log GMC job":g.gmcNo+" \u2014 "+g.client,body,function(){
     if(!val("fNo"))return mErr("Enter the GMC / OSF number.");
     var rec={id:g.id||uid(),month:val("fMonth")||state.curMonth,gmcNo:gmcNorm(val("fNo")),clientRaw:val("fRaw")||val("fClient"),
       client:val("fClient")||val("fRaw"),desc:val("fDesc"),scope:val("fScope"),jccNo:val("fJcc"),jccDate:val("fJccD"),doneBy:val("fBy"),
       status:val("fStat"),report:val("fRep"),qtn:val("fQtn"),schedDate:val("fSched"),doneDate:val("fDone"),
-      techs:checked("fTechs"),remind:+val("fRm"),remarks:val("fRem"),location:val("fLoc")};
+      techs:checked("fTechs"),remind:+val("fRm"),remarks:val("fRem"),progress:val("fProg"),location:val("fLoc")};
     if(g.id){for(var i=0;i<state.gmc.length;i++)if(state.gmc[i].id===g.id)state.gmc[i]=rec;}
     else state.gmc.push(rec);
     draftDel("gmc-"+(g.id||"new"));closeModal();commit("Saved");

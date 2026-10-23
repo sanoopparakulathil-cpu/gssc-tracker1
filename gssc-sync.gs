@@ -28,7 +28,7 @@ var CLAUDE_MODEL = "claude-sonnet-5";
 
 /* Bump this whenever you paste in a new copy of the script. The app can read it
    back, so you can tell at a glance whether your deployment is up to date. */
-var SCRIPT_VERSION = "2026-10-23-tech";
+var SCRIPT_VERSION = "2026-10-24-verify";
 
 var FILE_NAME = "gssc-tracker-data.json";
 
@@ -326,40 +326,75 @@ function jobInfo_(main, duty) {
   return out;
 }
 
-/* every completion a technician has made on an AMC / GMC row */
-function rowDone_(h) {
+/* where each AMC / GMC row stands: Submitted -> (supervisor) Completed / Balance Work / Returned */
+function rowState_(h) {
   var m = {};
-  h.d.events.forEach(function (e) {
-    if (e.kind === "row" && e.act === "complete") m[e.rowKind + "|" + e.rowId] = e;
+  h.d.events.slice().sort(function (a, b) { return a.ts - b.ts; }).forEach(function (e) {
+    var k = e.rowKind + "|" + e.rowId;
+    if (e.kind === "row") m[k] = { st: "Submitted", sub: e, ver: null };
+    else if (e.kind === "verify" && m[k]) {
+      m[k].ver = e;
+      m[k].st = e.ok ? (m[k].sub.result === "partial" ? "Balance Work" : "Completed") : "Returned";
+    }
   });
   return m;
 }
 
-/* the full AMC and GMC lists a technician can see and tick off */
+function rowFields_(s) {
+  if (!s) return { doneDate: "", jcc: "", by: "", remaining: "", note: "", comment: "", at: 0, result: "" };
+  return { doneDate: s.sub.doneDate || "", jcc: s.sub.jcc || "", by: s.sub.tech || "", remaining: s.sub.remaining || "",
+    note: s.sub.note || "", comment: (s.ver && !s.ver.ok) ? (s.ver.comment || "") : "", at: s.sub.ts, result: s.sub.result || "complete" };
+}
+
+/* the full AMC and GMC lists a technician can see and update. No prices or quotation data are ever sent. */
 function listsFor_(main, h) {
-  var done = rowDone_(h);
+  var rs = rowState_(h);
   var cur = String(main.curMonth || dayStr_(0).slice(0, 7));
   var recent = dayStr_(-60);
   var amc = [], gmc = [];
   (main.amc || []).forEach(function (a) {
-    var ev = done["amc|" + a.id], fin = a.status === "Completed" || !!ev, m = String(a.month || "");
+    var s = rs["amc|" + a.id], m = String(a.month || "");
+    var fin = a.status === "Completed" || (s && s.st === "Completed");
     if (a.status === "Cancelled") return;
-    if (m !== cur && !(m < cur && !fin) && !ev) return;
+    if (m !== cur && !(m < cur && !fin) && !s) return;
+    var f = rowFields_(s);
     amc.push({ id: a.id, month: m, no: a.amcNo || "", site: a.site || "", system: a.system || "", serv: a.serviceNo || "",
-      sched: a.schedDate || "", status: fin ? "Completed" : (a.status || "Open"),
-      doneDate: ev ? ev.doneDate : (a.doneDate || ""), jcc: ev ? ev.jcc : (a.jccNo || ""),
-      by: ev ? ev.tech : (a.doneBy || ""), sr: ev ? (ev.sr || a.srNo || "") : (a.srNo || "") });
+      sched: a.schedDate || "", status: a.status === "Completed" ? "Completed" : (s ? s.st : (a.status || "Open")),
+      doneDate: s ? f.doneDate : (a.doneDate || ""), jcc: s ? f.jcc : (a.jccNo || ""), by: s ? f.by : (a.doneBy || ""),
+      sr: s ? (s.sub.sr || a.srNo || "") : (a.srNo || ""), remaining: f.remaining, note: f.note, comment: f.comment, result: f.result,
+      progress: a.progress || "" });
   });
   (main.gmc || []).forEach(function (g) {
-    var ev = done["gmc|" + g.id], fin = g.status === "Completed" || !!ev;
-    if (fin && !ev && String(g.doneDate || "") < recent) return;
+    var s = rs["gmc|" + g.id];
+    var fin = g.status === "Completed" || (s && s.st === "Completed");
+    if (fin && !s && String(g.doneDate || "") < recent) return;
+    var f = rowFields_(s);
     gmc.push({ id: g.id, month: String(g.month || ""), no: g.gmcNo || "", client: g.client || g.clientRaw || "", desc: g.desc || "",
-      items: scopeItems_(g.scope), sched: g.schedDate || "", status: fin ? "Completed" : (g.status || "Open"),
-      doneDate: ev ? ev.doneDate : (g.doneDate || ""), jcc: ev ? ev.jcc : (g.jccNo || ""), by: ev ? ev.tech : (g.doneBy || "") });
+      items: scopeItems_(g.scope), sched: g.schedDate || "", status: g.status === "Completed" ? "Completed" : (s ? s.st : (g.status || "Open")),
+      doneDate: s ? f.doneDate : (g.doneDate || ""), jcc: s ? f.jcc : (g.jccNo || ""), by: s ? f.by : (g.doneBy || ""),
+      remaining: f.remaining, note: f.note, comment: f.comment, result: f.result, progress: g.progress || "" });
   });
   amc.sort(function (a, b) { return a.site < b.site ? -1 : (a.site > b.site ? 1 : 0); });
   gmc.sort(function (a, b) { return a.no < b.no ? 1 : (a.no > b.no ? -1 : 0); });
   return { amc: amc.slice(0, 400), gmc: gmc.slice(0, 400) };
+}
+
+/* the duty roster for today and tomorrow, so technicians can see who is where and who is absent */
+function teamDuty_(main) {
+  var techs = (main.techs || []).filter(function (t) { return t.active !== false; }), name = {};
+  techs.forEach(function (t) { name[t.id] = t.name; });
+  return [dayStr_(0), dayStr_(1)].map(function (ds) {
+    var rows = [], absent = [], busy = {};
+    (main.duties || []).forEach(function (d) {
+      if (d.date !== ds) return;
+      var ids = d.techIds || [], names = ids.map(function (id) { return name[id] || ""; }).filter(function (x) { return x; });
+      ids.forEach(function (id) { busy[id] = 1; });
+      if (d.activity === "Leave") { absent = absent.concat(names); return; }
+      rows.push({ techs: names, site: d.siteText || "", activity: d.activity || "", location: d.location || "" });
+    });
+    var free = techs.filter(function (t) { return !busy[t.id]; }).map(function (t) { return t.name; });
+    return { date: ds, rows: rows, absent: absent, free: free };
+  });
 }
 
 function techState_(tech, h, main) {
@@ -378,7 +413,7 @@ function techState_(tech, h, main) {
     .slice(-60).reverse();
   var L = listsFor_(main, h);
   return { ok: true, tech: tech.name, today: dayStr_(0), jobs: jobs, tools: toolState_(h.d), history: mine,
-           sites: siteNames_(main), amc: L.amc, gmc: L.gmc };
+           sites: siteNames_(main), amc: L.amc, gmc: L.gmc, team: teamDuty_(main) };
 }
 
 function siteNames_(main) {
@@ -432,25 +467,37 @@ function techAct_(body) {
     var row = null, rows = ev.rowKind === "amc" ? (main.amc || []) : (main.gmc || []);
     rows.forEach(function (x) { if (x.id === ev.rowId) row = x; });
     if (!row) return json_({ ok: false, error: "Job not found. Refresh and try again." });
-    var prior = rowDone_(h)[ev.rowKind + "|" + row.id];
-    if (prior) return json_({ ok: false, error: "Already completed by " + prior.tech + "." });
-    if (row.status === "Completed") return json_({ ok: false, error: "Already marked completed." });
-    var jc = String(ev.jcc || "").trim().slice(0, 40);
-    if (!jc) return json_({ ok: false, error: "JCC number is compulsory." });
+    var cur = rowState_(h)[ev.rowKind + "|" + row.id];
+    if (row.status === "Completed" || (cur && cur.st === "Completed")) return json_({ ok: false, error: "Already completed." });
+    if (cur && cur.st === "Submitted") {
+      return json_({ ok: false, error: "Already submitted by " + cur.sub.tech + ". Waiting for your supervisor to verify." });
+    }
     var dd = String(ev.doneDate || "");
     if (!/^\d{4}-\d{2}-\d{2}$/.test(dd) || dd > dayStr_(0) || dd < dayStr_(-45)) {
-      return json_({ ok: false, error: "Completed date must be within the last 45 days and not in the future." });
+      return json_({ ok: false, error: "Date must be within the last 45 days and not in the future." });
     }
+    var result = ev.result === "partial" ? "partial" : "complete";
     var items = ev.rowKind === "gmc" ? scopeItems_(row.scope) : [];
-    if (items.length && !(ev.items && ev.items.total === items.length && ev.items.done === items.length)) {
-      return json_({ ok: false, error: "Tick every scope item. Nothing was marked completed." });
+    var jc = String(ev.jcc || "").trim().slice(0, 40);
+    var remaining = String(ev.remaining || "").trim().slice(0, 600);
+    if (result === "complete") {
+      if (!jc) return json_({ ok: false, error: "JCC number is compulsory." });
+      if (items.length && !(ev.items && ev.items.total === items.length && ev.items.done === items.length)) {
+        return json_({ ok: false, error: "Tick every scope item. Nothing was marked completed." });
+      }
+    } else if (!remaining) {
+      return json_({ ok: false, error: "Write what is remaining." });
     }
-    rec.kind = "row"; rec.act = "complete"; rec.rowKind = ev.rowKind; rec.rowId = row.id;
+    rec.kind = "row"; rec.act = "submit"; rec.result = result; rec.rowKind = ev.rowKind; rec.rowId = row.id;
     rec.site = ev.rowKind === "amc" ? (row.site || "") : (row.client || row.clientRaw || "");
     rec.no = ev.rowKind === "amc" ? (row.amcNo || "") : (row.gmcNo || "");
     rec.doneDate = dd; rec.jcc = jc; rec.sr = String(ev.sr || "").trim().slice(0, 40);
-    rec.remarks = String(ev.remarks || "").slice(0, 500);
-    if (items.length) rec.items = { done: items.length, total: items.length };
+    rec.note = String(ev.remarks || "").slice(0, 600);
+    rec.remaining = result === "partial" ? remaining : "";
+    if (items.length) {
+      var dn = result === "complete" ? items.length : Math.max(0, Math.min(items.length, Number(ev.items && ev.items.done) || 0));
+      rec.items = { done: dn, total: items.length };
+    }
   } else if (act === "t_tool") {
     if (ev.act !== "out" && ev.act !== "return") return json_({ ok: false, error: "bad tool action" });
     var tools = toolState_(h.d), t = null;
@@ -515,6 +562,15 @@ function adminAct_(body) {
     var blocked = h.d.tools.filter(function (t) { return !keep[t.id] && heldNames[t.name.toLowerCase()]; });
     if (blocked.length) return json_({ ok: false, error: blocked[0].name + " is still with " + heldNames[blocked[0].name.toLowerCase()] + ". Return it first." });
     h.d.tools = next;
+    techSave_(h);
+    return json_({ ok: true });
+  }
+  if (act === "a_verify") {
+    var vk = body.rowKind + "|" + body.rowId, vs = rowState_(h)[vk];
+    if (!vs || vs.st !== "Submitted") return json_({ ok: false, error: "Nothing waiting to verify for this job." });
+    h.d.events.push({ id: "v" + newId_(), ts: Date.now(), clientTs: 0, techId: "admin", tech: "Supervisor", kind: "verify",
+      ok: !!body.ok, comment: String(body.comment || "").slice(0, 300), rowKind: body.rowKind, rowId: body.rowId,
+      site: vs.sub.site, no: vs.sub.no });
     techSave_(h);
     return json_({ ok: true });
   }
