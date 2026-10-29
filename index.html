@@ -54,6 +54,7 @@
   nav.tabs button[data-tab="cal"]{--tabc:#E07A00}
   nav.tabs button[data-tab="files"]{--tabc:#00838F}
   nav.tabs button[data-tab="duty"]{--tabc:#AD1457}
+  nav.tabs button[data-tab="equip"]{--tabc:#0F6E4C}
   nav.tabs button[data-tab="agent"]{--tabc:#B25000}
   .chat{display:flex;flex-direction:column;gap:10px;max-height:52vh;overflow-y:auto;padding:2px}
   .msg{max-width:86%;padding:9px 12px;border-radius:12px;font-size:14.5px;line-height:1.5;white-space:pre-wrap}
@@ -249,7 +250,7 @@
   </div>
   <div class="top-right"><button id="themeBtn" title="Change colours" style="background:none;border:1px solid currentColor;
     color:inherit;border-radius:3px;font-family:inherit;font-size:11px;padding:2px 7px;cursor:pointer;opacity:.8">Theme</button>
-    <span style="opacity:.75">v29</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
+    <span style="opacity:.75">v30</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
 </header>
 
 <nav class="tabs" role="tablist">
@@ -262,6 +263,7 @@
   <button role="tab" data-tab="files" aria-selected="false">Reports</button>
   <button role="tab" data-tab="duty" aria-selected="false">Duty</button>
   <button role="tab" data-tab="tech" aria-selected="false">Tech</button>
+  <button role="tab" data-tab="equip" aria-selected="false">Equipment</button>
   <button role="tab" data-tab="agent" aria-selected="false">Agent</button>
   <button role="tab" data-tab="updates" aria-selected="false">Updates</button>
   <button role="tab" data-tab="report" aria-selected="false">Month report</button>
@@ -411,7 +413,7 @@ function nextServ(s){
   return n+suf+" Serv";}
 
 /* ================= device sync ================= */
-var COLL=["contracts","amc","gmc","oncall","duties","techs","files"];
+var COLL=["contracts","amc","gmc","oncall","duties","techs","files","equip"];
 var SNAP={},SYNC={url:"",key:"",last:0,busy:false,timer:null,err:""};
 function syncCfgLoad(){
   try{var c=JSON.parse(localStorage.getItem("gssc-sync-cfg")||"{}");
@@ -1462,6 +1464,7 @@ function load(){
     if(!state.oncall)state.oncall=[];
     if(!state.files)state.files=[];
     if(!state.log)state.log=[];
+    if(!state.equip)state.equip=[];
     chatLoad();
     boot();
   }).catch(function(){state=JSON.parse(JSON.stringify(SEED));boot();});
@@ -1537,7 +1540,7 @@ function render(){
     +'<span style="margin-left:auto"></span>'
     +'<button class="btn ghost" id="genNext">Generate '+mLabel(mAdd(m,1))+' schedule</button>';
   document.getElementById("view").innerHTML=
-    ({dash:viewDash,search:viewSearch,amc:viewAmc,gmc:viewGmc,oncall:viewCall,cal:viewCal,files:viewFiles,duty:viewDuty,tech:viewTech,agent:viewAgent,updates:viewUpdates,report:viewReport,data:viewData})[tab]();
+    ({dash:viewDash,search:viewSearch,amc:viewAmc,gmc:viewGmc,oncall:viewCall,cal:viewCal,files:viewFiles,duty:viewDuty,tech:viewTech,equip:viewEquip,agent:viewAgent,updates:viewUpdates,report:viewReport,data:viewData})[tab]();
   wire();
   if(tab==="tech")techWire();
   stickHeight();
@@ -3079,6 +3082,316 @@ function pendingExcel(month){
   XLSX.utils.book_append_sheet(wb,sheetFrom(rows),"Pending");
   XLSX.writeFile(wb,"GSSC_Pending_"+m+".xlsx");}
 
+
+/* ================= site equipment registers =================
+   One row per real piece of kit on a site. Identity fields (tag, location,
+   make) are set once; check fields are recorded on every visit and carry
+   forward from the last one, so a technician confirms rather than retypes. */
+
+var PF=["Pass","Fail","Requires action","Not tested"];
+var EQUIP_KINDS=[
+ {k:"ext",   name:"Fire extinguishers", unit:"extinguisher", std:"NFPA 10",
+  id:[{k:"tag",l:"Tag / ID"},{k:"loc",l:"Location"},
+      {k:"type",l:"Type",o:["DCP","CO2","Foam / AFFF","Water","Clean agent","Wet chemical","Automatic DCP"]},
+      {k:"cap",l:"Capacity"},{k:"make",l:"Make",d:"Heba"},
+      {k:"mfg",l:"Mfg. year",ph:"e.g. 2019"},{k:"hydro",l:"Last hydro test",ph:"year"}],
+  chk:[{k:"gauge",l:"Pressure gauge",o:["OK (green)","Low","Over-pressure","Missing / broken"]},
+       {k:"cond",l:"Physical condition",o:["Good","Minor damage","Corroded","Damaged","Missing"]},
+       {k:"hose",l:"Hose / nozzle",o:["OK","Cracked","Blocked","Missing"]},
+       {k:"pin",l:"Safety pin & seal",o:["OK","Seal broken","Pin missing"]},
+       {k:"access",l:"Accessibility",o:["Clear","Obstructed","Not mounted","Sign missing"]},
+       {k:"rem",l:"Remarks",t:"text"}]},
+
+ {k:"hose",  name:"Fire hose cabinets", unit:"cabinet", std:"NFPA 14 / 1962",
+  id:[{k:"tag",l:"Cabinet ID"},{k:"loc",l:"Location"},
+      {k:"htype",l:"Hose type",o:["Rubber lined","Canvas","Hose reel","Rack hose"]},
+      {k:"hlen",l:"Hose length",o:["15 m","20 m","23 m","30 m","Other"]}],
+  chk:[{k:"reel",l:"Reel / nozzle condition",o:["OK","Stiff / seized","Leaking","Damaged","Missing"]},
+       {k:"valve",l:"Angle valve operation",o:["Operates freely","Stiff","Leaking","Seized","Missing"]},
+       {k:"glass",l:"Cabinet glass / lock",o:["OK","Glass broken","Lock broken","Door damaged","Key missing"]},
+       {k:"hosecond",l:"Hose condition",o:["OK","Cut / split","Mildew","Coupling damaged","Missing"]},
+       {k:"rem",l:"Remarks",t:"text"}]},
+
+ {k:"hyd",   name:"Fire hydrants", unit:"hydrant", std:"NFPA 25",
+  id:[{k:"tag",l:"Hydrant ID"},{k:"loc",l:"Location"},
+      {k:"htype",l:"Type",o:["Pillar / above ground","Underground","Wall","Monitor"]},
+      {k:"outlets",l:"Outlets",o:["1","2","3","4"]}],
+  chk:[{k:"body",l:"Body condition",o:["Good","Paint peeling","Corroded","Damaged","Leaking"]},
+       {k:"pstat",l:"Static pressure",ph:"bar or psi"},
+       {k:"pres",l:"Residual pressure",ph:"bar or psi"},
+       {k:"outlet",l:"Outlet / coupling",o:["OK","Thread damaged","Cap missing","Leaking"]},
+       {k:"access",l:"Valve accessibility",o:["Clear","Obstructed","Buried","Cannot operate"]},
+       {k:"rem",l:"Remarks",t:"text"}]},
+
+ {k:"fa",    name:"Fire alarm panels", unit:"panel", std:"NFPA 72",
+  id:[{k:"tag",l:"Panel / location"},{k:"make",l:"Make"},{k:"model",l:"Model"},
+      {k:"ptype",l:"Type",o:["Addressable","Conventional","Wireless","Hybrid"]},
+      {k:"loops",l:"Loops / zones"}],
+  chk:[{k:"panel",l:"Control panel",o:PF},
+       {k:"power",l:"Power supply & batteries",o:PF},
+       {k:"det",l:"Smoke / heat detectors",o:PF},
+       {k:"mcp",l:"Manual call points",o:PF},
+       {k:"sound",l:"Sounders / strobes",o:PF},
+       {k:"faults",l:"Trouble / fault log",o:PF},
+       {k:"relay",l:"Interface relays",o:PF},
+       {k:"battv",l:"Battery voltage",ph:"V"},
+       {k:"rem",l:"Remarks",t:"text"}]},
+
+ {k:"pump",  name:"Fire pumps", unit:"pump", std:"NFPA 20 / 25",
+  id:[{k:"tag",l:"Pump",o:["Jockey","Electric duty","Diesel standby"]},
+      {k:"loc",l:"Pump room / location"},{k:"make",l:"Make / model"},
+      {k:"rpm",l:"Nameplate RPM"},{k:"flow",l:"Rated flow (GPM)"},{k:"head",l:"Rated head / PSI"}],
+  chk:[{k:"suct",l:"Suction pressure",ph:"bar or psi"},
+       {k:"churn",l:"Discharge — churn (0%)",ph:"bar or psi"},
+       {k:"d100",l:"Discharge — 100% flow",ph:"bar or psi"},
+       {k:"d150",l:"Discharge — 150% flow",ph:"bar or psi"},
+       {k:"seq",l:"Auto controller sequence",o:["Started & stopped correctly","Started, manual stop","Failed to start","Not tested"]},
+       {k:"battv",l:"Battery voltage",ph:"V (diesel)"},
+       {k:"fuel",l:"Fuel level",o:["Full","3/4","1/2","1/4","Low","N/A"]},
+       {k:"cool",l:"Coolant level",o:["OK","Topped up","Low","Leaking","N/A"]},
+       {k:"runmin",l:"Run time",ph:"minutes"},
+       {k:"rem",l:"Remarks",t:"text"}]},
+
+ {k:"agent", name:"Clean agent / FM-200", unit:"zone", std:"NFPA 2001 / 12",
+  id:[{k:"tag",l:"Protected area"},{k:"agent",l:"Agent",o:["FM-200","Novec 1230","CO2","Inergen","Aerosol"]},
+      {k:"cylq",l:"Cylinders (qty)"},{k:"cylsz",l:"Cylinder size"},
+      {k:"design",l:"Design weight (kg)"},{k:"panel",l:"Release panel make / model"}],
+  chk:[{k:"netwt",l:"Cylinder net weight (kg)",ph:"as weighed"},
+       {k:"gauge",l:"Pressure gauge reading",ph:"bar or psi"},
+       {k:"act",l:"Actuator / solenoid",o:PF},
+       {k:"abort",l:"Abort switch",o:PF},
+       {k:"rel",l:"Release panel",o:PF},
+       {k:"room",l:"Room integrity",o:["OK","Gaps found","Door seal failed","Not tested"]},
+       {k:"damp",l:"Dampers / shutdown",o:PF},
+       {k:"rem",l:"Remarks",t:"text"}]}
+];
+
+function equipKind(k){for(var i=0;i<EQUIP_KINDS.length;i++)if(EQUIP_KINDS[i].k===k)return EQUIP_KINDS[i];return EQUIP_KINDS[0];}
+
+/* every site we know about, from the contracts and the month lists */
+function allSites(){
+  var s={};
+  state.contracts.forEach(function(c){if(c.site)s[c.site]=1;});
+  state.amc.forEach(function(a){if(a.site)s[a.site]=1;});
+  (state.equip||[]).forEach(function(e){if(e.site)s[e.site]=1;});
+  return Object.keys(s).sort();}
+
+function equipOf(site,kind){
+  return (state.equip||[]).filter(function(e){
+    return e.site===site&&(!kind||e.kind===kind);});}
+
+/* NFPA 10: CO2 cylinders every 5 years, dry chemical and water every 12. */
+function hydroNote(it){
+  if(it.kind!=="ext")return "";
+  var t=String(it.type||"").toLowerCase();
+  var every=(t.indexOf("co2")>-1)?5:12;
+  var base=parseInt(it.hydro||it.mfg||"",10);
+  if(!base||base<1950||base>2100)return "";
+  var due=base+every,now=today().getFullYear();
+  if(now>due)return '<span class="flag over">Hydro overdue '+(now-due)+'y</span>';
+  if(now===due)return '<span class="flag open">Hydro due this year</span>';
+  return '<span class="sub">hydro due '+due+'</span>';}
+
+function lastInsp(it){return (it.insp&&it.insp.length)?it.insp[it.insp.length-1]:null;}
+function inspAge(it){
+  var L=lastInsp(it);
+  if(!L||!L.date)return null;
+  return daysSince(L.date);}
+
+/* a check value that reads as a problem */
+var PF_BAD={"Fail":1,"Requires action":1};
+function badValue(v){
+  var s=String(v||"");
+  if(!s)return false;
+  if(PF_BAD[s])return true;
+  return /low|missing|broken|damaged|corroded|obstructed|leaking|seized|blocked|failed|cut|buried|cannot|over-pressure|stiff|peeling|gaps|mildew|thread damaged|cap missing|not mounted|sign missing|pin missing|seal broken|door damaged|key missing|minor damage/i.test(s);}
+function faultsOf(it){
+  var L=lastInsp(it);
+  if(!L)return [];
+  var K=equipKind(it.kind),out=[];
+  K.chk.forEach(function(f){
+    if(f.k==="rem")return;
+    if(badValue(L[f.k]))out.push(f.l+": "+L[f.k]);});
+  return out;}
+
+
+/* ---------- the equipment tab ---------- */
+var eqSite="",eqKind="ext";
+function eqCurrentSite(){
+  if(eqSite)return eqSite;
+  var S=allSites();
+  return S.length?S[0]:"";}
+
+function fieldInput(f,v,idp){
+  var id=idp+f.k;
+  if(f.o)return '<select id="'+id+'">'+'<option value=""></option>'+opts(f.o,v||"")+'</select>';
+  if(f.t==="text")return '<textarea id="'+id+'" rows="2">'+esc(v||"")+'</textarea>';
+  return '<input id="'+id+'" value="'+esc(v||"")+'"'+(f.ph?' placeholder="'+esc(f.ph)+'"':'')+'>';}
+
+function readFields(list,idp){
+  var o={};
+  list.forEach(function(f){o[f.k]=val(idp+f.k);});
+  return o;}
+
+/* ---- the asset itself ---- */
+function equipModal(kind,item){
+  var K=equipKind(kind),isNew=!item;
+  var site=eqCurrentSite();
+  item=item||{id:"",site:site,kind:kind,insp:[]};
+  var body='<div class="field"><label>Site</label><select id="eSite">'
+      +allSites().map(function(s){return '<option'+(s===(item.site||site)?' selected':'')+'>'+esc(s)+'</option>';}).join("")
+      +'</select></div><div class="grid2">';
+  K.id.forEach(function(f){
+    var v=item[f.k]!==undefined?item[f.k]:(isNew&&f.d?f.d:"");
+    body+='<div class="field"><label>'+esc(f.l)+'</label>'+fieldInput(f,v,"e_")+'</div>';});
+  body+='</div><p class="hint">These details describe the '+esc(K.unit)
+    +' itself. Condition is recorded separately each visit.</p>';
+  openModal((isNew?"Add ":"Edit ")+K.unit,body,function(){
+    var rec={id:item.id||uid(),site:val("eSite"),kind:kind,insp:item.insp||[]};
+    K.id.forEach(function(f){rec[f.k]=val("e_"+f.k);});
+    if(!rec.tag&&!rec.loc)return mErr("Give it at least a tag or a location, so it can be told apart.");
+    state.equip=state.equip||[];
+    if(item.id){for(var i=0;i<state.equip.length;i++)if(state.equip[i].id===item.id)state.equip[i]=rec;}
+    else state.equip.push(rec);
+    eqSite=rec.site;closeModal();commit("Saved");
+  },isNew?"":'<button class="btn danger" id="mDel">Remove</button>',false,null,null);
+  var d=document.getElementById("mDel");
+  if(d)d.onclick=function(){
+    if(!confirm("Remove this "+K.unit+" and its inspection history?"))return;
+    state.equip=state.equip.filter(function(x){return x.id!==item.id;});
+    closeModal();commit("Removed");};}
+
+/* ---- recording a visit, pre-filled from last time ---- */
+function inspectModal(item,bulkIds){
+  var K=equipKind(item.kind),L=lastInsp(item)||{};
+  var many=bulkIds&&bulkIds.length>1;
+  var body='';
+  if(many)body+='<div class="info">Recording the same reading against <b>'+bulkIds.length+'</b> '
+    +esc(K.unit)+'s. Anything you leave blank is left as it was.</div>';
+  else body+='<div class="info">'+esc(item.tag||item.loc||K.unit)
+    +(L.date?' — last checked '+esc(fmt(L.date))+(L.by?' by '+esc(L.by):''):' — not inspected before')+'</div>';
+  body+='<div class="grid2">'
+    +'<div class="field"><label>Inspection date</label><input type="date" id="i_date" value="'+esc(iso(today()))+'"></div>'
+    +'<div class="field"><label>Inspected by</label><select id="i_by"><option value=""></option>'
+    +state.techs.filter(function(t){return t.active!==false;}).map(function(t){
+        return '<option'+(t.name===L.by?' selected':'')+'>'+esc(t.name)+'</option>';}).join("")
+    +'</select></div></div><div class="grid2">';
+  K.chk.forEach(function(f){
+    var v=many?"":(L[f.k]||"");
+    body+='<div class="field"'+(f.t==="text"?' style="grid-column:1/-1"':'')+'><label>'+esc(f.l)+'</label>'
+      +fieldInput(f,v,"i_")+'</div>';});
+  body+='</div>';
+  if(!many&&L.date)body+='<p class="hint">Values are carried over from the last visit — change what has moved and leave the rest.</p>';
+  openModal("Record inspection — "+K.name.toLowerCase(),body,function(){
+    if(!val("i_date"))return mErr("Set the inspection date.");
+    if(!val("i_by"))return mErr("Say who inspected it.");
+    var rec={date:val("i_date"),by:val("i_by")};
+    K.chk.forEach(function(f){rec[f.k]=val("i_"+f.k);});
+    var ids=bulkIds&&bulkIds.length?bulkIds:[item.id];
+    ids.forEach(function(id){
+      var it=null;
+      (state.equip||[]).forEach(function(x){if(x.id===id)it=x;});
+      if(!it)return;
+      var prev=lastInsp(it)||{},merged={date:rec.date,by:rec.by};
+      K.chk.forEach(function(f){
+        merged[f.k]=(many&&!rec[f.k])?(prev[f.k]||""):rec[f.k];});
+      it.insp=(it.insp||[]).concat([merged]);
+      if(it.insp.length>24)it.insp=it.insp.slice(-24);});
+    closeModal();commit(ids.length>1?(ids.length+" "+K.unit+"s updated"):"Inspection recorded");
+  },"",true,null,null);}
+
+function inspHistoryModal(item){
+  var K=equipKind(item.kind),H=(item.insp||[]).slice().reverse();
+  var body='<div class="info">'+esc(item.tag||item.loc||K.unit)+' — '+H.length+' inspection(s) on record.</div>';
+  if(!H.length)body+='<div class="empty"><b>Nothing recorded yet</b>Use Record inspection to add the first one.</div>';
+  else{
+    body+='<div class="tbl-wrap" style="max-height:50vh;overflow-y:auto"><table class="rsp"><thead><tr>'
+      +'<th>Date</th><th>By</th>'+K.chk.map(function(f){return '<th>'+esc(f.l)+'</th>';}).join("")
+      +'</tr></thead><tbody>';
+    H.forEach(function(r){
+      body+='<tr><td class="num" data-l="Date">'+esc(r.date?fmt(r.date):"—")+'</td>'
+        +'<td data-l="By">'+(techChip(r.by)||'<span class="sub">—</span>')+'</td>'
+        +K.chk.map(function(f){
+          var v=r[f.k]||"";
+          return '<td data-l="'+esc(f.l)+'"'+(badValue(v)?' style="color:#8E0000;font-weight:700"':'')+'>'
+            +(v?esc(v):'<span class="sub">—</span>')+'</td>';}).join("")
+        +'</tr>';});
+    body+='</tbody></table></div>';}
+  openModal("Inspection history",body,null,"",true,null,null);}
+
+function viewEquip(){
+  var S=allSites();
+  if(!S.length)return '<div class="card"><div class="body"><div class="empty">'
+    +'<b>No sites yet</b>Import an AMC list or add a contract first — the registers hang off your site list.</div></div></div>';
+  var site=eqCurrentSite(),K=equipKind(eqKind),rows=equipOf(site,eqKind);
+  var pick=EQUIP_KINDS.map(function(x){
+    var n=equipOf(site,x.k).length;
+    return '<button class="btn '+(eqKind===x.k?"":"ghost")+'" data-eqkind="'+x.k+'">'+esc(x.name)
+      +(n?' <span class="count">'+n+'</span>':'')+'</button>';}).join("");
+  var h='<div class="toolbar">'
+    +'<label class="lbl" style="font-size:12px;color:var(--muted)">Site</label>'
+    +'<select id="eqSiteSel" style="min-width:200px">'
+      +S.map(function(s){return '<option'+(s===site?' selected':'')+'>'+esc(s)+'</option>';}).join("")+'</select>'
+    +'<span class="spacer"></span>'
+    +(rows.length?'<button class="btn ghost" id="eqBulk">Record visit for all '+rows.length+'</button>':'')
+    +(rows.length?'<button class="btn ghost" data-export="equip">Export Excel</button>':'')
+    +'<button class="btn" id="eqAdd">Add '+esc(K.unit)+'</button></div>'
+    +'<div class="toolbar viewbar">'+pick+'</div>';
+
+  var overdue=rows.filter(function(it){var a=inspAge(it);return a===null||a>120;}).length;
+  var faulty=rows.filter(function(it){return faultsOf(it).length;}).length;
+  h+='<div class="card"><h2>'+esc(K.name)+' &mdash; '+esc(site)
+    +' <span class="count">'+rows.length+'</span>'
+    +(faulty?'<span class="count" style="background:#FBDDDD;color:#8E0000">'+faulty+' with faults</span>':'')
+    +(overdue?'<span class="count">'+overdue+' not checked recently</span>':'')
+    +'<span class="count">'+esc(K.std)+'</span></h2>'
+    +'<div class="body flush"><div class="tbl-wrap"><table id="eqTbl" class="rsp"><thead><tr>'
+    +K.id.slice(0,3).map(function(f){return '<th>'+esc(f.l)+'</th>';}).join("")
+    +'<th>Last checked</th><th>By</th><th>Condition</th><th></th></tr></thead><tbody>';
+  if(!rows.length)h+='<tr><td colspan="7"><div class="empty"><b>No '+esc(K.unit)+'s recorded for '+esc(site)+'</b>'
+    +'Add them once and every later visit just confirms or changes the readings.</div></td></tr>';
+  rows.forEach(function(it){
+    var L=lastInsp(it),age=inspAge(it),f=faultsOf(it);
+    var cls=f.length?"f-over":(age===null||age>120?"f-open":"");
+    h+='<tr class="'+cls+'">'
+      +K.id.slice(0,3).map(function(fd,i){
+          var v=it[fd.k]||"";
+          return '<td data-l="'+esc(fd.l)+'"'+(i===0?' class="site-name"':'')+'>'
+            +(v?esc(v):'<span class="sub">—</span>')+(i===0?hydroNote(it):'')+'</td>';}).join("")
+      +'<td class="num" data-l="Last checked">'+(L&&L.date?esc(fmt(L.date))
+          +(age!==null&&age>120?'<span class="sub">'+age+' days ago</span>':'')
+          :'<span class="sub">never</span>')+'</td>'
+      +'<td data-l="By">'+(L&&L.by?techChip(L.by):'<span class="sub">—</span>')+'</td>'
+      +'<td data-l="Condition">'+(f.length
+          ?'<span class="flag over">'+f.length+' fault'+(f.length===1?'':'s')+'</span><span class="sub">'+esc(f.join("; ").slice(0,70))+'</span>'
+          :(L?'<span class="pill ok">OK</span>':'<span class="sub">—</span>'))+'</td>'
+      +'<td data-l=""><button class="link" data-eqins="'+it.id+'">Record</button>'
+      +'<button class="link" data-eqedit="'+it.id+'">Edit</button>'
+      +(it.insp&&it.insp.length?'<button class="link" data-eqhist="'+it.id+'">History</button>':'')
+      +'</td></tr>';});
+  h+='</tbody></table></div></div></div>';
+  return h;}
+
+function equipExcel(){
+  var site=eqCurrentSite(),out=[];
+  EQUIP_KINDS.forEach(function(K){
+    var rows=equipOf(site,K.k);
+    if(!rows.length)return;
+    var head=["Site"].concat(K.id.map(function(f){return f.l;}))
+      .concat(["Last checked","Inspected by"])
+      .concat(K.chk.map(function(f){return f.l;}));
+    var data=[head];
+    rows.forEach(function(it){
+      var L=lastInsp(it)||{};
+      data.push([it.site].concat(K.id.map(function(f){return it[f.k]||"";}))
+        .concat([L.date?fmt(L.date):"",L.by||""])
+        .concat(K.chk.map(function(f){return L[f.k]||"";})));});
+    out.push([K.name,data]);});
+  if(!out.length)return toast("Nothing to export for "+site);
+  var wb=XLSX.utils.book_new();
+  out.forEach(function(p){XLSX.utils.book_append_sheet(wb,sheetFrom(p[1]),p[0].slice(0,28));});
+  XLSX.writeFile(wb,"GSSC_Equipment_"+site.replace(/[^A-Za-z0-9]+/g,"_")+".xlsx");}
+
 function viewReport(){
   var m=state.curMonth,A=amcOf(m),G=gmcOf(m),C=callsOf(m);
   function bucket(arr,f){return arr.filter(f);}
@@ -4240,6 +4553,10 @@ function dutyRows(){
   return r;}
 function exportIt(k){
   var m=state.curMonth,tag=mLabel(m).replace(" ","-");
+  if(k==="equip")return equipExcel();
+  if(k==="contracts")return saveBook([{name:"Contracts",rows:[["AMC no","Site","System","Location","Frequency","Contract status"]]
+    .concat(state.contracts.map(function(c){return [c.amcNo,c.site,c.system||"",c.location||"",c.freq||"",c.contractStatus||""];}))}],
+    "GSSC-Contracts.xlsx");
   if(k==="amc")saveBook([{name:"AMC "+tag,rows:amcRows(m)}],"GSSC-AMC-"+tag+".xlsx");
   else if(k==="gmc")saveBook([{name:"GMC",rows:gmcRows(state.gmc)}],"GSSC-GMC-jobs.xlsx");
   else if(k==="oncall")saveBook([{name:"On-Call "+tag,rows:callRows(callsOf(m))}],"GSSC-oncall-"+tag+".xlsx");
@@ -4299,6 +4616,7 @@ function wire(){
         tr.style.display=(okM&&(!ct||tr.dataset.fcat===ct))?"":"none";});
       return;}
     if(t.id==="dutyDayIn"){dutyDay=t.value||null;render();return;}
+    if(t.id==="eqSiteSel"){eqSite=t.value;render();return;}
     if(t.id==="amcStat"||t.id==="amcLoc")filt("amcTbl","amcQ","amcStat",null,"amcLoc");
     if(t.id==="conLoc")filt("conTbl","conQ",null,null,"conLoc");
     if(t.id==="gmcStat"||t.id==="gmcMonth"||t.id==="gmcLoc")filt("gmcTbl","gmcQ","gmcStat","gmcMonth","gmcLoc");
@@ -4401,6 +4719,18 @@ function wire(){
     if(b.id==="logClear"){state.log=[];save();render();toast("List cleared");return;}
     if(b.id==="dupChk"){dupModal();return;}
     if(b.id==="pendBtn"){pendingModal();return;}
+    if(b.id==="eqAdd"){equipModal(eqKind,null);return;}
+    if(b.id==="eqBulk"){
+      var list=equipOf(eqCurrentSite(),eqKind);
+      if(!list.length)return;
+      inspectModal(list[0],list.map(function(x){return x.id;}));return;}
+    if(b.dataset.eqkind){eqKind=b.dataset.eqkind;render();return;}
+    if(b.dataset.eqins){var i1=null;(state.equip||[]).forEach(function(x){if(x.id===b.dataset.eqins)i1=x;});
+      if(i1)inspectModal(i1,null);return;}
+    if(b.dataset.eqedit){var i2=null;(state.equip||[]).forEach(function(x){if(x.id===b.dataset.eqedit)i2=x;});
+      if(i2)equipModal(i2.kind,i2);return;}
+    if(b.dataset.eqhist){var i3=null;(state.equip||[]).forEach(function(x){if(x.id===b.dataset.eqhist)i3=x;});
+      if(i3)inspHistoryModal(i3);return;}
     if(b.dataset.amcview){amcView=b.dataset.amcview;render();return;}
     if(b.dataset.gmcview){gmcView=b.dataset.gmcview;render();return;}
     if(b.dataset.dutypick){dutyPick=b.dataset.dutypick;render();return;}
