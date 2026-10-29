@@ -28,7 +28,7 @@ var CLAUDE_MODEL = "claude-sonnet-5";
 
 /* Bump this whenever you paste in a new copy of the script. The app can read it
    back, so you can tell at a glance whether your deployment is up to date. */
-var SCRIPT_VERSION = "2026-10-24-forms";
+var SCRIPT_VERSION = "2026-10-30-equip";
 
 var FILE_NAME = "gssc-tracker-data.json";
 
@@ -215,6 +215,8 @@ function techLoad_() {
   if (!d.sd) d.sd = {};
   if (!d.mrls) d.mrls = [];
   if (!d.photos) d.photos = {};
+  if (!d.equip) d.equip = [];
+  if (!d.equipSchema) d.equipSchema = null;
   if (!d.tools || !d.tools.length) {
     d.tools = DEFAULT_TOOLS.map(function (n) { return { id: newId_(), name: n }; });
   }
@@ -454,6 +456,139 @@ function sdSave_(tech, h, ev) {
   techSave_(h);
   return { ok: true };
 }
+
+/* ---------- site equipment registers ----------
+   The item list is owned by the admin app and pushed up here. Technicians
+   add inspections against those items from their phones; the admin app pulls
+   them back down. Each side only writes what it owns, so neither can quietly
+   wipe the other's work. */
+
+var EQUIP_CHK_KEYS = 24;      // most check fields any one register has
+var EQUIP_KEEP     = 24;      // inspections kept per item
+
+function equipClean_(v, n) { return cleanStr_(v, n || 120); }
+
+function equipFindIdx_(d, id) {
+  for (var i = 0; i < d.equip.length; i++) if (d.equip[i].id === id) return i;
+  return -1;
+}
+
+/* admin sends its item list for one site (or all sites) */
+function equipSchemaSave_(h, schema) {
+  if (!schema || !schema.length) return 0;
+  var clean = schema.slice(0, 20).map(function (K) {
+    var f = function (list) {
+      return (list || []).slice(0, 30).map(function (x) {
+        var o = { k: equipClean_(x.k, 24), l: equipClean_(x.l, 80) };
+        if (x.o && x.o.length) o.o = x.o.slice(0, 20).map(function (v) { return equipClean_(v, 60); });
+        if (x.t) o.t = equipClean_(x.t, 8);
+        if (x.ph) o.ph = equipClean_(x.ph, 60);
+        return o;
+      }).filter(function (o) { return /^[a-zA-Z0-9]{1,24}$/.test(o.k); });
+    };
+    return { k: equipClean_(K.k, 12), name: equipClean_(K.name, 60),
+             unit: equipClean_(K.unit, 30), std: equipClean_(K.std, 40),
+             id: f(K.id), chk: f(K.chk) };
+  }).filter(function (K) { return /^[a-z]{2,12}$/.test(K.k) && K.chk.length; });
+  if (!clean.length) return 0;
+  h.d.equipSchema = clean;
+  return clean.length;
+}
+
+function equipPush_(h, items, site) {
+  if (!items || !items.length) {
+    if (!site) return { error: "Nothing sent." };
+  }
+  var seen = {}, added = 0, updated = 0;
+  (items || []).slice(0, 4000).forEach(function (raw) {
+    var id = equipClean_(raw.id, 40);
+    if (!/^[A-Za-z0-9_-]{4,40}$/.test(id)) return;
+    var s = equipClean_(raw.site, 120).trim();
+    var kind = equipClean_(raw.kind, 12);
+    if (!s || !/^[a-z]{2,12}$/.test(kind)) return;
+    seen[id] = 1;
+    var rec = { id: id, site: s, kind: kind, insp: [] };
+    Object.keys(raw).slice(0, 40).forEach(function (k) {
+      if (k === "id" || k === "site" || k === "kind" || k === "insp") return;
+      if (!/^[a-zA-Z0-9]{1,24}$/.test(k)) return;
+      rec[k] = equipClean_(raw[k], 200);
+    });
+    var at = equipFindIdx_(h.d, id);
+    if (at < 0) { h.d.equip.push(rec); added++; }
+    else {
+      // keep the inspections already on file, take the identity from the admin
+      rec.insp = h.d.equip[at].insp || [];
+      h.d.equip[at] = rec;
+      updated++;
+    }
+  });
+  // an item the admin removed from a site it sent in full should go here too
+  var removed = 0;
+  if (site) {
+    h.d.equip = h.d.equip.filter(function (e) {
+      if (e.site !== site) return true;
+      if (seen[e.id]) return true;
+      removed++; return false;
+    });
+  }
+  techSave_(h);
+  return { ok: true, added: added, updated: updated, removed: removed, total: h.d.equip.length };
+}
+
+/* one inspection, recorded against one or more items */
+function equipInspect_(tech, h, ev) {
+  var ids = (ev.ids || []).slice(0, 500).map(function (x) { return equipClean_(x, 40); })
+    .filter(function (x) { return /^[A-Za-z0-9_-]{4,40}$/.test(x); });
+  if (!ids.length) return { error: "Nothing chosen to record against." };
+  var date = equipClean_(ev.date, 10);
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(date) || date > dayStr_(1)) return { error: "Check the inspection date." };
+
+  var vals = {}, keys = Object.keys(ev.vals || {}).slice(0, EQUIP_CHK_KEYS);
+  keys.forEach(function (k) {
+    if (!/^[a-zA-Z0-9]{1,24}$/.test(k)) return;
+    vals[k] = equipClean_(ev.vals[k], 400);
+  });
+
+  var carry = ev.carry !== false;   // blank means "leave as it was"
+  var n = 0;
+  ids.forEach(function (id) {
+    var at = equipFindIdx_(h.d, id);
+    if (at < 0) return;
+    var it = h.d.equip[at];
+    var prev = (it.insp && it.insp.length) ? it.insp[it.insp.length - 1] : {};
+    var rec = { date: date, by: tech.name, byId: tech.id, ts: Date.now() };
+    keys.forEach(function (k) {
+      rec[k] = (carry && !vals[k]) ? (prev[k] || "") : vals[k];
+    });
+    it.insp = (it.insp || []).concat([rec]);
+    if (it.insp.length > EQUIP_KEEP) it.insp = it.insp.slice(-EQUIP_KEEP);
+    n++;
+  });
+  if (!n) return { error: "Those items are no longer on the register. Refresh the app." };
+  techSave_(h);
+  return { ok: true, n: n };
+}
+
+/* what a technician sees for one site */
+function equipForSite_(d, site) {
+  return d.equip.filter(function (e) { return e.site === site; })
+    .map(function (e) {
+      var last = (e.insp && e.insp.length) ? e.insp[e.insp.length - 1] : null;
+      var copy = {};
+      Object.keys(e).forEach(function (k) { if (k !== "insp") copy[k] = e[k]; });
+      copy.last = last;
+      copy.n = (e.insp || []).length;
+      return copy;
+    });
+}
+
+/* every site that has anything on its register */
+function equipSites_(d) {
+  var s = {};
+  d.equip.forEach(function (e) { if (e.site) s[e.site] = (s[e.site] || 0) + 1; });
+  return Object.keys(s).sort().map(function (k) { return { site: k, n: s[k] }; });
+}
+
 /* ---------- material requirement list after service (with photos) ---------- */
 function mrlSum_(f) {
   return { id: f.id, site: f.site, date: f.date, status: f.status, tech: f.tech, ts: f.mod, n: (f.items || []).length };
@@ -624,6 +759,24 @@ function techAct_(body) {
     h.d.photos[pid] = pf.getId();
     techSave_(h);
     return json_({ ok: true, fileId: pf.getId() });
+  }
+  if (act === "t_equip_sites") {
+    return json_({ ok: true, sites: equipSites_(h.d) });
+  }
+  if (act === "t_equip_get") {
+    var esite = cleanStr_(body.site, 120).trim();
+    if (!esite) return json_({ ok: false, error: "Choose the site." });
+    return json_({ ok: true, site: esite, items: equipForSite_(h.d, esite),
+      schema: h.d.equipSchema || [] });
+  }
+  if (act === "t_equip_save") {
+    var er = equipInspect_(tech, h, body.ev || {});
+    if (er.error) return json_({ ok: false, error: er.error });
+    // the phone's send queue replaces its whole state with whatever comes back,
+    // so this has to answer in the same shape as every other queued action
+    var st = techState_(tech, h, main);
+    st.equipSaved = er.n;
+    return json_(st);
   }
   if (act === "t_chk_get") {
     var gf = null;
@@ -813,6 +966,16 @@ function adminAct_(body) {
     h.d.forms = h.d.forms.filter(function (f) { return f.id !== body.id; });
     techSave_(h);
     return json_({ ok: true });
+  }
+  if (act === "a_equip_push") {
+    var esc2 = equipSchemaSave_(h, body.schema);
+    var ep = equipPush_(h, body.items || [], cleanStr_(body.site, 120).trim());
+    if (ep.error) return json_({ ok: false, error: ep.error });
+    ep.schema = esc2;
+    return json_(ep);
+  }
+  if (act === "a_equip_pull") {
+    return json_({ ok: true, equip: h.d.equip, version: SCRIPT_VERSION });
   }
   if (act === "a_setpin") {
     var pin = String(body.pin || "");

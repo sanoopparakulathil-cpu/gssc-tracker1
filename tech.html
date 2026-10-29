@@ -51,6 +51,8 @@ textarea{min-height:80px;font-family:inherit}
 .chk input{width:24px;height:24px;margin:0;flex:none}
 .hist{padding:10px 0;border-bottom:1px solid var(--line);font-size:15px}
 .hist:last-child{border:0}
+.eqtabs{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:10px}
+.eqtabs .btn{flex:1 1 auto;font-size:13px;padding:8px 10px}
 .pend{font-size:12px;color:var(--warn);font-weight:600}
 .center{max-width:420px;margin:40px auto}
 .mh{font-weight:700;color:var(--navy);margin:16px 2px 8px;font-size:15px;border-bottom:2px solid var(--navy);padding-bottom:4px}
@@ -186,11 +188,12 @@ function draw(force){
     +'<button data-t="amc" aria-selected="'+(tab==="amc")+'">AMC</button>'
     +'<button data-t="gmc" aria-selected="'+(tab==="gmc")+'">GMC</button>'
     +'<button data-t="chk" aria-selected="'+(tab==="chk")+'">Checklist</button>'
+    +'<button data-t="equip" aria-selected="'+(tab==="equip")+'">Equipment</button>'
     +'<button data-t="tools" aria-selected="'+(tab==="tools")+'">Tools</button>'
     +'<button data-t="hist" aria-selected="'+(tab==="hist")+'">History</button></nav><main>';
   if(!online)h+='<div class="banner b-warn">No signal. Your updates are saved on this phone and will send when the signal returns.</div>';
   if(held.length&&tab!=="tools")h+='<div class="banner b-warn">You still hold: <b>'+held.map(function(t){return esc(t.name);}).join(", ")+'</b>. Return it in the Tools tab when you finish.</div>';
-  h+= tab==="jobs"?viewJobs():(tab==="chk"?viewChk():tab==="tools"?viewTools():(tab==="hist"?viewHist():(tab==="duty"?viewDuty():viewList(tab))));
+  h+= tab==="jobs"?viewJobs():(tab==="chk"?viewChk():tab==="equip"?viewEquip():tab==="tools"?viewTools():(tab==="hist"?viewHist():(tab==="duty"?viewDuty():viewList(tab))));
   h+='</main>';
   app.innerHTML=h;
   wire();
@@ -363,6 +366,18 @@ function wire(){
     var j=findJob(x.dataset.start);send("t_job",{act:"start",dutyId:j.id,ref:j.ref,site:j.site});};});
   Array.prototype.forEach.call(document.querySelectorAll("[data-done]"),function(x){x.onclick=function(){var j=findJob(x.dataset.done),L=linkedRow(j);if(L)rowModal(L.kind,L.row);else completeModal(j);};});
   if(tab==='chk')wireChk();
+  if(tab==='equip'){
+    var qa=function(sel,fn){Array.prototype.forEach.call(document.querySelectorAll(sel),fn);};
+    qa("[data-eqsite]",function(x){x.onclick=function(){EQ.kind="";eqLoad(x.dataset.eqsite);};});
+    var bk=el("eqBack"); if(bk)bk.onclick=function(){EQ.site="";EQ.items=null;EQ.err="";draw();};
+    qa("[data-eqkind]",function(x){x.onclick=function(){EQ.kind=x.dataset.eqkind;draw();};});
+    qa("[data-eqrec]",function(x){x.onclick=function(){eqInspectModal([x.dataset.eqrec]);};});
+    var all=el("eqAll");
+    if(all)all.onclick=function(){
+      var ids=(EQ.items||[]).filter(function(it){return it.kind===EQ.kind;})
+        .map(function(it){return it.id;});
+      if(ids.length)eqInspectModal(ids);};
+  }
   var lq=el("lq");
   if(lq){lq.oninput=function(){LQ[tab]=lq.value;el("lst").innerHTML=listHtml(tab);wireRows();};
     el("lf").onchange=function(){LF[tab]=el("lf").value;el("lst").innerHTML=listHtml(tab);wireRows();};wireRows();}
@@ -406,6 +421,157 @@ function viewChk(){
       +(pend?'<div class="pend">Waiting to send…</div>':'')
       +'<div class="row"><button class="btn sec" data-copen="'+esc(f.id)+'">'+(f.status==="final"?'View':'Continue')+'</button></div></div>';}).join("");
 }
+
+/* ---------- site equipment registers ----------
+   The item list and the field definitions both come from the supervisor's app
+   through the script, so this page never carries its own copy to go stale. */
+var EQ={site:"",kind:"",items:null,schema:null,loading:false,err:""};
+
+function eqKindDef(k){
+  var S=EQ.schema||[];
+  for(var i=0;i<S.length;i++)if(S[i].k===k)return S[i];
+  return null;}
+
+function eqLoad(site){
+  EQ.site=site;EQ.items=null;EQ.err="";EQ.loading=true;draw();
+  post(auth({action:"t_equip_get",site:site})).then(function(r){
+    EQ.loading=false;
+    if(!r||!r.ok){EQ.err=(r&&r.error)||"Could not load the register.";draw();return;}
+    EQ.items=r.items||[];EQ.schema=r.schema||[];
+    if(!EQ.kind&&EQ.items.length)EQ.kind=EQ.items[0].kind;
+    draw();
+  }).catch(function(){EQ.loading=false;EQ.err="No signal. Try again when you have a connection.";draw();});}
+
+function eqSitesWith(){
+  // sites from today's jobs first, then anything else the register knows
+  var seen={},out=[];
+  (S.jobs||[]).forEach(function(j){var n=String(j.site||"").trim();if(n&&!seen[n]){seen[n]=1;out.push(n);}});
+  (S.amc||[]).forEach(function(r){var n=String(r.site||"").trim();if(n&&!seen[n]){seen[n]=1;out.push(n);}});
+  (S.sites||[]).forEach(function(n){if(n&&!seen[n]){seen[n]=1;out.push(n);}});
+  return out;}
+
+function eqPendingFor(id){
+  return queue().some(function(x){
+    return x.action==="t_equip_save"&&x.ev&&(x.ev.ids||[]).indexOf(id)>-1;});}
+
+function eqBad(v){
+  var s=String(v||"");
+  if(!s)return false;
+  return /^(Fail|Requires action)$/.test(s)
+    ||/low|missing|broken|damaged|corroded|obstructed|leaking|seized|blocked|failed|cut|buried|cannot|over-pressure|stiff|peeling|gaps|mildew|not mounted|sign missing|pin missing|seal broken|door damaged|key missing|minor damage|thread damaged|cap missing/i.test(s);}
+
+function eqFaults(it,K){
+  if(!it.last||!K)return [];
+  var out=[];
+  K.chk.forEach(function(f){
+    if(f.k==="rem")return;
+    if(eqBad(it.last[f.k]))out.push(f.l+": "+it.last[f.k]);});
+  return out;}
+
+function viewEquip(){
+  if(!EQ.site){
+    var sites=eqSitesWith();
+    var h='<div class="card"><h3>Equipment register</h3>'
+      +'<p class="sub">Pick the site you are at. You will see its extinguishers, hose boxes, '
+      +'hydrants, panels, pumps and gas systems, with last visit’s readings already filled in.</p></div>';
+    if(!sites.length)return h+'<div class="empty">No sites on your list yet.</div>';
+    return h+sites.map(function(n){
+      return '<button class="btn wide sec" data-eqsite="'+esc(n)+'" style="text-align:left">'+esc(n)+'</button>';}).join("");
+  }
+  var head='<div class="card"><div style="display:flex;justify-content:space-between;gap:8px;align-items:center">'
+    +'<h3 style="margin:0">'+esc(EQ.site)+'</h3>'
+    +'<button class="btn sec" id="eqBack">Change site</button></div></div>';
+  if(EQ.loading)return head+'<div class="empty">Loading the register…</div>';
+  if(EQ.err)return head+'<div class="banner b-bad">'+esc(EQ.err)+'</div>'
+    +'<button class="btn wide" data-eqsite="'+esc(EQ.site)+'">Try again</button>';
+  if(!EQ.items||!EQ.items.length)
+    return head+'<div class="empty">Nothing on this site’s register yet.<br>'
+      +'Your supervisor adds the equipment once, then you just record the readings.</div>';
+
+  var kinds={};
+  EQ.items.forEach(function(it){kinds[it.kind]=(kinds[it.kind]||0)+1;});
+  var ks=Object.keys(kinds);
+  if(ks.indexOf(EQ.kind)<0)EQ.kind=ks[0];
+  var K=eqKindDef(EQ.kind);
+  var h=head+'<div class="eqtabs">'+ks.map(function(k){
+      var d=eqKindDef(k);
+      return '<button class="btn '+(k===EQ.kind?'':'sec')+'" data-eqkind="'+esc(k)+'">'
+        +esc(d?d.name:k)+' ('+kinds[k]+')</button>';}).join("")+'</div>';
+
+  var list=EQ.items.filter(function(it){return it.kind===EQ.kind;});
+  h+='<button class="btn wide" id="eqAll">Record reading for all '+list.length+'</button><div style="height:10px"></div>';
+
+  h+=list.map(function(it){
+    var f=eqFaults(it,K),pend=eqPendingFor(it.id);
+    var name=it.tag||it.loc||"(untagged)";
+    var sub=[it.loc&&it.tag?it.loc:"",it.type||it.agent||it.htype||"",it.cap||it.cylsz||""]
+      .filter(Boolean).join(" · ");
+    return '<div class="card"><div style="display:flex;justify-content:space-between;gap:8px">'
+      +'<h3>'+esc(name)+'</h3>'
+      +'<span class="pill '+(f.length?'p-out':(it.last?'p-Completed':'p-out'))+'">'
+        +(f.length?f.length+' fault'+(f.length===1?'':'s'):(it.last?'OK':'not checked'))+'</span></div>'
+      +(sub?'<div class="sub">'+esc(sub)+'</div>':'')
+      +'<div class="sub">'+(it.last?('last '+esc(dshort(it.last.date))+' by '+esc(it.last.by||"")):'never recorded')+'</div>'
+      +(f.length?'<div class="banner b-warn" style="margin-top:8px">'+esc(f.join("; "))+'</div>':'')
+      +(pend?'<div class="pend">Waiting to send…</div>':'')
+      +'<div class="row"><button class="btn sec" data-eqrec="'+esc(it.id)+'">Record reading</button></div></div>';
+  }).join("");
+  return h;}
+
+function eqInspectModal(ids){
+  var K=eqKindDef(EQ.kind);
+  if(!K)return toast("That register is not set up yet.");
+  var many=ids.length>1;
+  var one=many?null:(function(){
+    var f=null;EQ.items.forEach(function(x){if(x.id===ids[0])f=x;});return f;})();
+  var last=(one&&one.last)||{};
+  var today=new Date(Date.now()+3*3600000).toISOString().slice(0,10);
+  var fields=K.chk.map(function(f){
+    var v=many?"":(last[f.k]||"");
+    var inp;
+    if(f.o&&f.o.length)
+      inp='<select id="q_'+f.k+'"><option value=""></option>'
+        +f.o.map(function(o){return '<option'+(o===v?' selected':'')+'>'+esc(o)+'</option>';}).join("")+'</select>';
+    else if(f.t==="text")
+      inp='<textarea id="q_'+f.k+'" rows="2">'+esc(v)+'</textarea>';
+    else
+      inp='<input id="q_'+f.k+'" value="'+esc(v)+'"'+(f.ph?' placeholder="'+esc(f.ph)+'"':'')+'>';
+    return '<label>'+esc(f.l)+'</label>'+inp;}).join("");
+  modal('<h2>'+(many?('Record for '+ids.length+' '+esc(K.unit)+'s'):esc((one&&(one.tag||one.loc))||K.unit))+'</h2>'
+    +(many?'<p class="sub">Anything you leave blank stays as it was on each one.</p>'
+         :(last.date?'<p class="sub">Last checked '+esc(dshort(last.date))+' by '+esc(last.by||"")
+             +'. Change what has moved, leave the rest.</p>'
+           :'<p class="sub">First reading for this '+esc(K.unit)+'.</p>'))
+    +'<label>Date</label><input type="date" id="qDate" value="'+today+'">'
+    +fields
+    +'<div id="qErr" class="banner b-bad" style="display:none;margin-top:12px"></div>'
+    +'<div class="row"><button class="btn go" style="flex:1" id="mOk">Save</button>'
+    +'<button class="btn sec" id="mNo">Cancel</button></div>',
+  function(m){
+    m.querySelector("#mNo").onclick=function(){m.remove();};
+    m.querySelector("#mOk").onclick=function(){
+      var d=m.querySelector("#qDate").value;
+      var err=m.querySelector("#qErr");
+      if(!d){err.textContent="Set the date.";err.style.display="";return;}
+      var vals={},any=false;
+      K.chk.forEach(function(f){
+        var fe=m.querySelector("#q_"+f.k);
+        vals[f.k]=fe?String(fe.value||"").trim():"";
+        if(vals[f.k])any=true;});
+      if(!any){err.textContent="Fill in at least one reading.";err.style.display="";return;}
+      m.remove();
+      send("t_equip_save",{ids:ids,date:d,vals:vals,carry:true});
+      toast(many?(ids.length+" "+K.unit+"s recorded"):"Reading saved");
+      // show the new reading straight away, then confirm from the server
+      EQ.items.forEach(function(it){
+        if(ids.indexOf(it.id)<0)return;
+        var prev=it.last||{},merged={date:d,by:S.tech};
+        K.chk.forEach(function(f){merged[f.k]=(!vals[f.k]&&many)?(prev[f.k]||""):vals[f.k];});
+        it.last=merged;it.n=(it.n||0)+1;});
+      draw();
+      setTimeout(function(){if(EQ.site)eqLoad(EQ.site);},1500);
+    };});}
+
 function siteChoices(){
   var seen={},out=[];
   (S.amc||[]).forEach(function(r){var n=String(r.site||"").trim();if(n&&!seen[n]){seen[n]=1;out.push(n);}});

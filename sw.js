@@ -1,4 +1,4 @@
-const CACHE = "gssc-tracker-v30";
+const CACHE = "gssc-tracker-v31";
 const ASSETS = ["./","./index.html","./manifest.webmanifest","./icon-192.png","./icon-512.png","./tech.html","./tech.webmanifest","./sitedata.json"];
 self.addEventListener("install", e => {
   self.skipWaiting();

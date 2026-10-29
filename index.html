@@ -250,7 +250,7 @@
   </div>
   <div class="top-right"><button id="themeBtn" title="Change colours" style="background:none;border:1px solid currentColor;
     color:inherit;border-radius:3px;font-family:inherit;font-size:11px;padding:2px 7px;cursor:pointer;opacity:.8">Theme</button>
-    <span style="opacity:.75">v30</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
+    <span style="opacity:.75">v31</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
 </header>
 
 <nav class="tabs" role="tablist">
@@ -3319,6 +3319,55 @@ function inspHistoryModal(item){
     body+='</tbody></table></div>';}
   openModal("Inspection history",body,null,"",true,null,null);}
 
+
+/* ---------- sharing the register with the technicians ----------
+   The items and the field definitions go up; the readings the technicians
+   took come back down. Each side only writes what it owns. */
+function equipSchemaForPush(){
+  return EQUIP_KINDS.map(function(K){
+    return {k:K.k,name:K.name,unit:K.unit,std:K.std,
+      id:K.id.map(function(f){return {k:f.k,l:f.l,o:f.o,t:f.t,ph:f.ph};}),
+      chk:K.chk.map(function(f){return {k:f.k,l:f.l,o:f.o,t:f.t,ph:f.ph};})};});}
+
+function equipPushSite(site,quiet){
+  if(!SYNC.url||!SYNC.key){if(!quiet)toast("Link this device first");return Promise.resolve(null);}
+  var items=equipOf(site).map(function(e){
+    var o={};
+    Object.keys(e).forEach(function(k){if(k!=="insp")o[k]=e[k];});
+    return o;});
+  return techPost({action:"a_equip_push",site:site,items:items,schema:equipSchemaForPush()})
+    .then(function(r){
+      if(!quiet){
+        if(r&&r.ok)toast(items.length+" item(s) sent to the technicians");
+        else toast((r&&r.error)||"Could not send the register");}
+      return r;})
+    .catch(function(){if(!quiet)toast("No connection to your script");return null;});}
+
+/* readings taken on the phones, merged in without losing anything local */
+function equipPull(quiet){
+  if(!SYNC.url||!SYNC.key){if(!quiet)toast("Link this device first");return Promise.resolve(null);}
+  return techPost({action:"a_equip_pull"}).then(function(r){
+    if(!r||!r.ok){if(!quiet)toast((r&&r.error)||"Could not read the technicians' register");return r;}
+    var byId={};(state.equip||[]).forEach(function(e){byId[e.id]=e;});
+    var added=0,merged=0;
+    (r.equip||[]).forEach(function(up){
+      var mine=byId[up.id];
+      if(!mine){
+        state.equip=(state.equip||[]).concat([up]);added++;return;}
+      var have={};(mine.insp||[]).forEach(function(x){have[(x.date||"")+"|"+(x.by||"")+"|"+(x.ts||"")]=1;});
+      var gained=0;
+      (up.insp||[]).forEach(function(x){
+        var k=(x.date||"")+"|"+(x.by||"")+"|"+(x.ts||"");
+        if(have[k])return;
+        mine.insp=(mine.insp||[]).concat([x]);gained++;});
+      if(gained){
+        mine.insp.sort(function(a,b){return (a.date||"")<(b.date||"")?-1:((a.date===b.date)?((a.ts||0)-(b.ts||0)):1);});
+        if(mine.insp.length>24)mine.insp=mine.insp.slice(-24);
+        merged++;}});
+    if(added||merged){commit(added+merged+" item(s) updated from the technicians");}
+    else if(!quiet)toast("Nothing new from the technicians");
+    return r;}).catch(function(){if(!quiet)toast("No connection to your script");return null;});}
+
 function viewEquip(){
   var S=allSites();
   if(!S.length)return '<div class="card"><div class="body"><div class="empty">'
@@ -3336,6 +3385,11 @@ function viewEquip(){
     +(rows.length?'<button class="btn ghost" id="eqBulk">Record visit for all '+rows.length+'</button>':'')
     +(rows.length?'<button class="btn ghost" data-export="equip">Export Excel</button>':'')
     +'<button class="btn" id="eqAdd">Add '+esc(K.unit)+'</button></div>'
+    +'<div class="toolbar" style="margin-top:-4px">'
+    +'<span class="hint" style="margin:0">Technicians</span>'
+    +'<button class="btn ghost" id="eqPush">Send this site\u2019s list to the phones</button>'
+    +'<button class="btn ghost" id="eqPull">Get their readings</button>'
+    +'<span class="spacer"></span></div>'
     +'<div class="toolbar viewbar">'+pick+'</div>';
 
   var overdue=rows.filter(function(it){var a=inspAge(it);return a===null||a>120;}).length;
@@ -4720,6 +4774,8 @@ function wire(){
     if(b.id==="dupChk"){dupModal();return;}
     if(b.id==="pendBtn"){pendingModal();return;}
     if(b.id==="eqAdd"){equipModal(eqKind,null);return;}
+    if(b.id==="eqPush"){equipPushSite(eqCurrentSite(),false);return;}
+    if(b.id==="eqPull"){equipPull(false);return;}
     if(b.id==="eqBulk"){
       var list=equipOf(eqCurrentSite(),eqKind);
       if(!list.length)return;
