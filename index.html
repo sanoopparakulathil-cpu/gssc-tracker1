@@ -87,10 +87,17 @@
   table{width:100%;border-collapse:collapse;font-size:13.5px}
   th{text-align:left;font-size:10.5px;letter-spacing:.1em;text-transform:uppercase;color:var(--muted);font-weight:700;
     padding:8px 9px;border-bottom:1px solid var(--line);background:var(--thbg);white-space:nowrap}
+  thead th{position:sticky;top:var(--stick,52px);z-index:5}
+  .stickbar{position:sticky;top:var(--stick,52px);z-index:6;background:var(--card);
+    padding-top:8px;padding-bottom:8px;margin-bottom:0;border-bottom:1px solid var(--line)}
+  #modalRoot thead th{position:static}
   td{padding:6px 9px;border-bottom:1px solid var(--line-soft);vertical-align:middle}
   tbody tr:hover{background:var(--rowhover)}
   td.num{font-variant-numeric:tabular-nums;white-space:nowrap}
   .tbl-wrap{overflow-x:auto}
+  .tchips{display:inline-flex;flex-wrap:wrap;gap:4px}
+  .tchip{display:inline-block;font-size:11.5px;font-weight:700;padding:2px 8px;border-radius:11px;
+    border:1px solid;white-space:nowrap;line-height:1.5}
   .site-name{font-weight:600;color:var(--navy)}
   .sub{display:block;font-size:11.5px;color:var(--muted)}
   .pill{display:inline-block;font-size:10.5px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
@@ -114,6 +121,18 @@
   .flag.open{background:#B26A00}
   .flag.renew{background:#5B3FA8}
   .flag.hold{background:#6B7686}
+  .toolbar.viewbar{gap:6px;margin-bottom:10px;padding-bottom:10px;border-bottom:1px solid var(--line)}
+  .toolbar.viewbar .btn{font-size:13px;padding:7px 13px}
+  .toolbar.viewbar .btn .count{margin-left:5px;opacity:.8}
+  .qi-tbl input,.qi-tbl select{width:100%;min-width:0;padding:6px 8px;font-size:13.5px}
+  .qi-tbl th{font-size:11px}
+  .qi-tbl td{padding:5px 6px}
+  .qi-x{display:flex;align-items:center;gap:5px;font-size:12.5px;color:var(--muted);white-space:nowrap}
+  .qi-x input{width:auto}
+  .link.danger{color:#C00000}
+  .tchips{display:inline-flex;flex-wrap:wrap;gap:4px}
+  .tchip{display:inline-block;font-size:11.5px;font-weight:700;padding:2px 8px;border-radius:11px;
+    border:1px solid;white-space:nowrap;line-height:1.5}
   .legend{display:flex;flex-wrap:wrap;gap:12px;font-size:12.5px;color:var(--muted);padding:9px 2px 0}
   .legend span{display:flex;align-items:center;gap:6px}
   .legend i{width:16px;height:12px;border-radius:3px;display:inline-block}
@@ -230,7 +249,7 @@
   </div>
   <div class="top-right"><button id="themeBtn" title="Change colours" style="background:none;border:1px solid currentColor;
     color:inherit;border-radius:3px;font-family:inherit;font-size:11px;padding:2px 7px;cursor:pointer;opacity:.8">Theme</button>
-    <span style="opacity:.75">v24</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
+    <span style="opacity:.75">v29</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
 </header>
 
 <nav class="tabs" role="tablist">
@@ -316,9 +335,14 @@ function el(h){var d=document.createElement("div");d.innerHTML=h.trim();return d
 function toast(m){var o=document.querySelector(".toast");if(o)o.remove();
   var t=el('<div class="toast">'+esc(m)+'</div>');document.body.appendChild(t);
   clearTimeout(toastTimer);toastTimer=setTimeout(function(){t.remove();},2600);}
+function locOpts(v){
+  var L=LOCATIONS;
+  return '<option value=""'+(v?"":" selected")+'>\u2014 not set \u2014</option>'+opts(L,v);}
 function opts(list,sel){return list.map(function(o){
   return '<option value="'+esc(o)+'"'+(o===sel?" selected":"")+">"+esc(o)+"</option>";}).join("");}
 function done(s){return s==="Completed";}
+/* work still genuinely to do — a cancelled visit is not outstanding */
+function outstanding(s){return s!=="Completed"&&s!=="Cancelled";}
 function byId(a,id){for(var i=0;i<a.length;i++)if(a[i].id===id)return a[i];return null;}
 function techName(id){var t=byId(state.techs,id);return t?t.name:"";}
 function tnorm(s){return String(s||"").toLowerCase().replace(/[^a-z]/g,"");}
@@ -332,6 +356,28 @@ function matchTech(name){
     if(hit)return;var m=tnorm(t.name);
     if(m===n||(n.length>=4&&m.indexOf(n)===0)||(m.length>=4&&n.indexOf(m)===0))hit=t;});
   return hit;}
+
+/* A technician's colour comes from their name, so it is the same on both
+   devices and survives a reinstall without storing anything extra. */
+var TECH_COLOURS=[
+  ["#1E5AA8","#E3EDF9"],["#2E7D32","#E3F1E4"],["#B25000","#FAEADB"],["#6A3FB5","#ECE6F8"],
+  ["#00797F","#DEF0F1"],["#AD1457","#FAE3ED"],["#5A6B00","#EFF2DB"],["#8E2B2B","#F8E4E4"],
+  ["#2D5F8A","#E4EEF6"],["#6D4C41","#F0E8E4"],["#36558F","#E6EBF5"],["#157268","#DFF0ED"]];
+function techHue(name){
+  var s=String(name||""),n=0;
+  for(var i=0;i<s.length;i++)n=(n*31+s.charCodeAt(i))>>>0;
+  return TECH_COLOURS[n%TECH_COLOURS.length];}
+function techChip(name){
+  if(!name)return "";
+  var c=techHue(name);
+  return '<span class="tchip" style="color:'+c[0]+';background:'+c[1]+';border-color:'+c[0]+'33">'+esc(name)+'</span>';}
+function techChips(ids,fallbackText){
+  var names=(ids||[]).map(techName).filter(Boolean);
+  if(!names.length&&fallbackText){
+    names=String(fallbackText).split(/\s*,\s*/).filter(Boolean);}
+  if(!names.length)return "";
+  return '<span class="tchips">'+names.map(techChip).join("")+'</span>';}
+
 function techNames(ids){return (ids||[]).map(techName).filter(Boolean).join(", ");}
 function freqMonths(f){f=(f||"").toLowerCase();
   if(f.indexOf("week")>-1||f.indexOf("month")>-1&&f.indexOf("bi")<0&&f.indexOf("3")<0)return 1;
@@ -1454,7 +1500,32 @@ function gmcOf(m){return state.gmc.filter(function(g){return g.month===m;});}
 function callsOf(m){return state.oncall.filter(function(o){return monthOf(o.date)===m;});}
 
 /* ---------- render ---------- */
+/* Redrawing replaces the whole view, which would otherwise throw you back to
+   the top of the page and lose the field you were typing in. */
+function viewKeep(){
+  var a=document.activeElement,k=null;
+  if(a&&a.id&&a!==document.body)k={id:a.id,
+    start:(a.selectionStart===undefined?null:a.selectionStart),
+    end:(a.selectionEnd===undefined?null:a.selectionEnd)};
+  return {y:window.pageYOffset||document.documentElement.scrollTop||0,focus:k};}
+function viewRestore(st){
+  if(!st)return;
+  if(st.y)window.scrollTo(0,st.y);
+  if(!st.focus)return;
+  var el=document.getElementById(st.focus.id);
+  if(!el)return;
+  try{
+    el.focus({preventScroll:true});
+    if(st.focus.start!==null&&el.setSelectionRange)el.setSelectionRange(st.focus.start,st.focus.end);
+  }catch(e){}}
+function stickHeight(){
+  try{
+    var n=document.querySelector("nav.tabs");
+    if(n)document.documentElement.style.setProperty("--stick",n.offsetHeight+"px");
+  }catch(e){}}
+
 function render(){
+  var _keep=viewKeep();
   document.getElementById("todayLabel").textContent=fmt(iso(today()));
   Array.prototype.forEach.call(document.querySelectorAll("nav.tabs button"),function(b){
     b.setAttribute("aria-selected",b.dataset.tab===tab?"true":"false");});
@@ -1469,6 +1540,8 @@ function render(){
     ({dash:viewDash,search:viewSearch,amc:viewAmc,gmc:viewGmc,oncall:viewCall,cal:viewCal,files:viewFiles,duty:viewDuty,tech:viewTech,agent:viewAgent,updates:viewUpdates,report:viewReport,data:viewData})[tab]();
   wire();
   if(tab==="tech")techWire();
+  stickHeight();
+  viewRestore(_keep);
   paintSync();
   if(state.files&&state.files.length)paintThumbs();
 }
@@ -1488,6 +1561,61 @@ function dateInp(k,r){var late=r.schedDate&&r.schedDate<iso(today())&&!done(r.st
   return '<input type="date" class="inline'+(late?" late":"")+'" value="'+esc(r.schedDate||"")+'" data-set="'+k+'|'+r.id+'|schedDate">';}
 
 /* ================= dashboard ================= */
+
+/* ---------- one list of live work, by duty type ---------- */
+var dutyPick="amc";
+function liveWork(kind){
+  var m=state.curMonth;
+  if(kind==="gmc")return state.gmc.filter(function(g){return outstanding(g.status);})
+    .sort(function(a,b){return (a.schedDate||"9")<(b.schedDate||"9")?-1:1;});
+  if(kind==="oncall")return (state.oncall||[]).filter(function(o){return o.status!=="Closed";})
+    .sort(function(a,b){return (a.date||"")>(b.date||"")?-1:1;});
+  return amcOf(m).filter(function(a){return outstanding(a.status);})
+    .sort(function(a,b){return (a.schedDate||"9")<(b.schedDate||"9")?-1:1;});}
+function dutyPanel(){
+  var t=iso(today());
+  var pick=function(k,lbl){
+    return '<button class="btn '+(dutyPick===k?"":"ghost")+'" data-dutypick="'+k+'">'+lbl
+      +' <span class="count">'+liveWork(k).length+'</span></button>';};
+  var rows=liveWork(dutyPick);
+  var np=pendingRows(state.curMonth).length;
+  var h='<div class="card"><h2>Live work <span class="count">completed work is hidden here</span></h2><div class="body">'
+    +'<div class="toolbar viewbar">'+pick("amc","AMC")+pick("gmc","GMC")+pick("oncall","On-call")
+    +'<span class="spacer"></span>'
+    +'<button class="btn ghost" id="pendBtn">Month-end pending'+(np?' <span class="count">'+np+'</span>':'')+'</button>'
+    +'</div>';
+  if(!rows.length)h+='<div class="empty" style="margin:0"><b>Nothing outstanding</b>'
+    +(dutyPick==="amc"?"Every AMC service for "+esc(mLabel(state.curMonth))+" is done or cancelled."
+      :(dutyPick==="gmc"?"Every GMC job is completed.":"No on-call is open."))+'</div>';
+  else{
+    h+='<div class="tbl-wrap"><table class="rsp"><thead><tr>'
+      +(dutyPick==="oncall"?'<th>Date</th><th>Site</th><th>Issue</th><th>Technicians</th><th>Status</th>'
+        :'<th>'+(dutyPick==="gmc"?"GMC no":"AMC no")+'</th><th>Site</th><th>'
+         +(dutyPick==="gmc"?"Job":"System")+'</th><th>Scheduled</th><th>Status</th>')
+      +'<th></th></tr></thead><tbody>';
+    rows.slice(0,40).forEach(function(r){
+      var late=dutyPick==="oncall"?false:(r.schedDate&&r.schedDate<t);
+      if(dutyPick==="oncall")
+        h+='<tr><td data-l="Date">'+esc(r.date?fmt(r.date):"—")+'</td>'
+          +'<td class="site-name" data-l="Site">'+esc(r.client||"")+'</td>'
+          +'<td data-l="Issue">'+esc((r.issue||"").slice(0,60))+'</td>'
+          +'<td data-l="Technicians">'+(techChips(r.techIds)||'<span class="sub">—</span>')+'</td>'
+          +'<td data-l="Status">'+esc(r.status||"")+'</td>'
+          +'<td data-l=""><button class="link" data-open="call|'+r.id+'">Open</button></td></tr>';
+      else
+        h+='<tr'+(late?' class="f-over"':'')+'>'
+          +'<td class="num site-name" data-l="No">'+esc(dutyPick==="gmc"?r.gmcNo:r.amcNo)+'</td>'
+          +'<td data-l="Site">'+esc(dutyPick==="gmc"?(r.clientRaw||r.client||""):r.site)+'</td>'
+          +'<td data-l="'+(dutyPick==="gmc"?"Job":"System")+'">'+esc(dutyPick==="gmc"?(r.desc||""):(r.system||""))+'</td>'
+          +'<td data-l="Scheduled">'+(r.schedDate?esc(fmt(r.schedDate))+(late?' <span class="flag over">Overdue</span>':'')
+            :'<span class="sub">not set</span>')+'</td>'
+          +'<td data-l="Status">'+esc(r.status||"")+'</td>'
+          +'<td data-l=""><button class="link" data-open="'+(dutyPick==="gmc"?"gmc":"amc")+'|'+r.id+'">Open</button></td></tr>';});
+    h+='</tbody></table></div>';
+    if(rows.length>40)h+='<p class="hint" style="margin:8px 0 0">Showing the first 40 of '+rows.length
+      +'. The full list is on the '+(dutyPick==="oncall"?"On-call":(dutyPick==="gmc"?"GMC":"AMC"))+' tab.</p>';}
+  return h+'</div></div>';}
+
 function viewDash(){
   var m=state.curMonth,t=iso(today());
   var A=amcOf(m),G=gmcOf(m),C=callsOf(m);
@@ -1511,6 +1639,7 @@ function viewDash(){
     +stat("",'Not scheduled',unsched.length,"no date set")
     +stat("red","On-call open",openCalls.length,"of "+C.length+" this month")
     +'</div>';
+  h+=dutyPanel();
   var dl=draftList();
   if(dl.length){
     h+='<div class="card"><h2>Unfinished entries <span class="count">'+dl.length+'</span></h2>'
@@ -1733,12 +1862,73 @@ function clientCard(c){
 }
 
 /* ================= AMC ================= */
+
+/* ---------- which slice of the month is on screen ---------- */
+var amcView="all",gmcView="all";
+function amcViewTitle(){
+  return amcView==="left"?"AMC still to do":(amcView==="done"?"AMC completed":"AMC service schedule");}
+function amcViewBar(total,doneN,leftN){
+  var left=(leftN===undefined?total-doneN:leftN);
+  var b=function(k,lbl,n){
+    return '<button class="btn '+(amcView===k?"":"ghost")+'" data-amcview="'+k+'">'+lbl
+      +(n===null?"":' <span class="count">'+n+'</span>')+'</button>';};
+  return '<div class="toolbar viewbar">'+b("all","All",total)+b("left","Remaining",left)
+    +b("done","Completed",doneN)+b("contracts","Active contracts",null)+'</div>';}
+function gmcViewBar(total,doneN,openN){
+  var b=function(k,lbl,n){
+    return '<button class="btn '+(gmcView===k?"":"ghost")+'" data-gmcview="'+k+'">'+lbl
+      +' <span class="count">'+n+'</span></button>';};
+  return '<div class="toolbar viewbar">'+b("all","All",total)+b("open","Pending",openN)
+    +b("done","Completed",doneN)+'</div>';}
+
+/* ---------- every live AMC contract, across all sites ---------- */
+function viewActiveContracts(monthRows){
+  var act=state.contracts.filter(function(c){return (c.contractStatus||"Active")==="Active";});
+  var byNo={};monthRows.forEach(function(a){ (byNo[a.amcNo]=byNo[a.amcNo]||[]).push(a); });
+  var h=amcViewBar(monthRows.length,monthRows.filter(function(a){return done(a.status);}).length,
+      monthRows.filter(function(a){return outstanding(a.status);}).length)
+    +'<div class="toolbar">'
+    +'<input type="search" id="conQ" placeholder="Filter AMC no or site" style="min-width:210px">'
+    +locFilter("conLoc")
+    +'<span class="spacer"></span>'
+    +'<button class="btn ghost" data-export="contracts">Export Excel</button></div>';
+  h+='<div class="card"><h2>Active AMC contracts <span class="count">'+act.length+' of '+state.contracts.length+'</span>'
+    +'<span class="count" id="conTblCount">'+act.length+' shown</span></h2>'
+    +'<div class="body flush"><div class="tbl-wrap"><table id="conTbl" class="rsp"><thead><tr>'
+    +'<th>AMC no</th><th>Site</th><th>System</th><th>Location</th><th>Frequency</th>'
+    +'<th>This month</th><th>Contract</th></tr></thead><tbody>';
+  if(!act.length)h+='<tr><td colspan="7"><div class="empty"><b>No active contracts</b>'
+    +'Contracts are added when you import an AMC list, or from the Data &amp; team tab.</div></td></tr>';
+  act.sort(function(a,b){return (a.site||"")<(b.site||"")?-1:1;}).forEach(function(c){
+    var mine=byNo[c.amcNo]||[],dn=mine.filter(function(a){return done(a.status);}).length;
+    var cell=mine.length
+      ? (dn===mine.length?'<span class="pill ok">all '+mine.length+' done</span>'
+         :'<span class="pill due">'+dn+' of '+mine.length+' done</span>')
+      : '<span class="sub">not scheduled</span>';
+    h+='<tr data-row="'+esc(((c.amcNo||"")+" "+(c.site||"")+" "+(c.system||"")).toLowerCase())+'"'
+      +' data-loc="'+esc(c.location||"")+'">'
+      +'<td class="num site-name" data-l="AMC no">'+esc(c.amcNo)+'</td>'
+      +'<td data-l="Site">'+esc(c.site)+'</td>'
+      +'<td data-l="System">'+esc(c.system||"")+'</td>'
+      +'<td data-l="Location">'+(c.location?esc(c.location):'<span class="sub">\u2014</span>')+'</td>'
+      +'<td data-l="Frequency">'+esc(c.freq||"")+'</td>'
+      +'<td data-l="This month">'+cell+'</td>'
+      +'<td data-l="Contract">'+cPill(c.contractStatus)+'</td></tr>';});
+  return h+'</tbody></table></div></div></div>';}
+
 function viewAmc(){
-  var m=state.curMonth,rows=amcOf(m);
-  var d=rows.filter(function(a){return done(a.status);}).length;
-  var h='<div class="toolbar">'
+  var m=state.curMonth,allRows=amcOf(m);
+  var d=allRows.filter(function(a){return done(a.status);}).length;
+  if(amcView==="contracts")return viewActiveContracts(allRows);
+  var rows=allRows;
+  if(amcView==="left")rows=allRows.filter(function(a){return outstanding(a.status);});
+  if(amcView==="done")rows=allRows.filter(function(a){return done(a.status);});
+  var leftN=allRows.filter(function(a){return outstanding(a.status);}).length;
+  var h=amcViewBar(allRows.length,d,leftN)
+    +'<div class="toolbar">'
     +'<input type="search" id="amcQ" placeholder="Filter AMC no or site" style="min-width:210px">'
     +'<select class="filter" id="amcStat"><option value="">All statuses</option>'+opts(AMC_STATUS,"")+'</select>'
+    +locFilter("amcLoc")
     +'<span class="spacer"></span>'
     +'<button class="btn ghost" data-bulk="amc">Set date for filtered</button>'
     +'<button class="btn ghost" data-import="amc">Import Excel</button>'
@@ -1746,14 +1936,19 @@ function viewAmc(){
     +'<button class="btn ghost" data-print="1">PDF / print</button>'
     +'<button class="btn ghost" data-delmonth="1">Delete this month</button>'
     +'<button class="btn" data-add="amc">Add service</button></div>';
-  h+='<div class="card"><h2>AMC service schedule &mdash; '+esc(mLabel(m))+' <span class="count">'+d+' of '+rows.length+' completed</span></h2>'
+  h+='<div class="card"><h2>'+esc(amcViewTitle())+' &mdash; '+esc(mLabel(m))
+    +' <span class="count">'+d+' of '+allRows.length+' completed</span>'
+    +'<span class="count" id="amcTblCount">'+rows.length+' shown</span></h2>'
     +'<div class="body flush"><div class="tbl-wrap"><table id="amcTbl" class="rsp"><thead><tr>'
     +'<th>AMC no</th><th>Site</th><th>System</th><th>Serv</th><th>Service date</th><th>Status</th>'
     +'<th>SR no</th><th>JCC no</th><th>Done by</th><th>Report</th><th>QTN</th><th>Technicians</th><th>Contract</th><th></th></tr></thead><tbody>';
-  if(!rows.length)h+='<tr><td colspan="14"><div class="empty"><b>No AMC list for '+esc(mLabel(m))+'</b>Use &ldquo;Generate schedule&rdquo; above or import the Excel list.</div></td></tr>';
+  if(!rows.length)h+='<tr><td colspan="14"><div class="empty"><b>'
+    +(allRows.length?(amcView==="left"?"Nothing left for "+esc(mLabel(m)):"Nothing completed yet for "+esc(mLabel(m)))
+      :"No AMC list for "+esc(mLabel(m)))+'</b>'
+    +(allRows.length?"":"Use &ldquo;Generate schedule&rdquo; above or import the Excel list.")+'</div></td></tr>';
   rows.forEach(function(a){
     var fl=amcFlag(a);
-    h+='<tr class="'+(fl?"f-"+fl:"")+'" data-row="'+esc((a.amcNo+" "+a.site+" "+a.system+" "+a.client).toLowerCase())+'" data-stat="'+esc(a.status)+'">'
+    h+='<tr class="'+(fl?"f-"+fl:"")+'" data-row="'+esc((a.amcNo+" "+a.site+" "+a.system+" "+a.client).toLowerCase())+'" data-stat="'+esc(a.status)+'" data-loc="'+esc(a.location||"")+'">'
       +'<td class="num site-name" data-l="AMC no">'+esc(a.amcNo)+'</td>'
       +'<td data-l="Site">'+esc(a.site)+flagBadge(fl)+'</td>'
       +'<td data-l="System">'+esc(a.system)+'</td><td class="num" data-l="Service">'+esc(a.serviceNo)+'</td>'
@@ -1762,7 +1957,7 @@ function viewAmc(){
       +'<td class="num" data-l="JCC no">'+(a.jccNo?esc(a.jccNo):'<span class="sub">\u2014</span>')+'</td>'
       +'<td data-l="Done by">'+(a.doneBy?esc(a.doneBy):'<span class="sub">\u2014</span>')+'</td>'
       +'<td data-l="Report">'+reportSel("amc",a)+'</td><td data-l="QTN">'+qtnSel("amc",a)+'</td>'
-      +'<td data-l="Technicians">'+(techNames(a.techs)||esc(a.techText||"")||'<span class="sub">\u2014</span>')+'</td>'
+      +'<td data-l="Technicians">'+(techChips(a.techs,a.techText)||'<span class="sub">\u2014</span>')+'</td>'
       +'<td data-l="Contract">'+cPill(a.contractStatus)+'</td>'
       +'<td data-l=""><button class="link" data-open="amc|'+a.id+'">Open</button>'
       +'<button class="link" data-up="amc|'+a.id+'">Report</button></td></tr>';});
@@ -1797,27 +1992,36 @@ function cPill(s){return s==="Active"?'<span class="pill ok">Active</span>'
 
 /* ================= GMC ================= */
 function viewGmc(){
-  var h='<div class="toolbar">'
+  var allG=state.gmc.slice(),dAll=allG.filter(function(g){return done(g.status);}).length;
+  var openN=allG.filter(function(g){return outstanding(g.status);}).length;
+  var h=gmcViewBar(allG.length,dAll,openN)
+    +'<div class="toolbar">'
     +'<input type="search" id="gmcQ" placeholder="Filter GMC no, client or job" style="min-width:230px">'
     +'<select class="filter" id="gmcStat"><option value="">All statuses</option>'+opts(GMC_STATUS,"")+'</select>'
     +'<select class="filter" id="gmcMonth"><option value="">All months</option>'
       +monthsPresent().map(function(k){return '<option value="'+k+'">'+mLabel(k)+'</option>';}).join("")+'</select>'
+    +locFilter("gmcLoc")
     +'<span class="spacer"></span>'
     +'<button class="btn ghost" data-import="gmc">Import Excel</button>'
     +'<button class="btn ghost" data-export="gmc">Export Excel</button>'
     +'<button class="btn ghost" data-print="1">PDF / print</button>'
     +'<button class="btn" data-add="gmc">Log job</button></div>';
-  var rows=state.gmc.slice().sort(function(a,b){return a.gmcNo<b.gmcNo?1:-1;});
-  var d=rows.filter(function(g){return done(g.status);}).length;
-  h+='<div class="card"><h2>GMC job register <span class="count">'+d+' of '+rows.length+' completed</span>'
+  var rows=allG.sort(function(a,b){return a.gmcNo<b.gmcNo?1:-1;});
+  if(gmcView==="open")rows=rows.filter(function(g){return outstanding(g.status);});
+  if(gmcView==="done")rows=rows.filter(function(g){return done(g.status);});
+  var d=dAll;
+  h+='<div class="card"><h2>'+(gmcView==="open"?"GMC jobs pending":(gmcView==="done"?"GMC jobs completed":"GMC job register"))
+    +' <span class="count">'+d+' of '+allG.length+' completed</span>'
+    +'<span class="count" id="gmcTblCount">'+rows.length+' shown</span>'
     +'<span class="count">newest number: '+esc(maxGmc())+'</span></h2>'
     +'<div class="body flush"><div class="tbl-wrap"><table id="gmcTbl" class="rsp"><thead><tr>'
     +'<th>GMC no</th><th>Client</th><th>Job description</th><th>Month</th><th>Scheduled</th><th>Status</th>'
     +'<th>Report</th><th>QTN</th><th>JCC no</th><th>JCC date</th><th>Done by</th><th>Progress remark</th><th></th></tr></thead><tbody>';
   rows.forEach(function(g){
-    h+='<tr data-row="'+esc((g.gmcNo+" "+g.clientRaw+" "+g.desc+" "+g.jccNo).toLowerCase())+'" data-stat="'+esc(g.status)+'" data-month="'+esc(g.month||"")+'">'
+    h+='<tr data-row="'+esc((g.gmcNo+" "+g.clientRaw+" "+g.desc+" "+g.jccNo).toLowerCase())+'" data-stat="'+esc(g.status)+'" data-month="'+esc(g.month||"")+'" data-loc="'+esc(g.location||"")+'">'
       +'<td class="num site-name" data-l="GMC no">'+esc(g.gmcNo)+'</td><td data-l="Client">'+esc(g.clientRaw)+'</td>'
-      +'<td data-l="Job">'+esc(g.desc)+(g.remarks?'<span class="sub">'+esc(g.remarks)+'</span>':'')+'</td>'
+      +'<td data-l="Job">'+esc(g.desc)+(g.remarks?'<span class="sub">'+esc(g.remarks)+'</span>':'')
+        +qtnSummary(g)+'</td>'
       +'<td class="num" data-l="Month">'+esc(mLabel(g.month))+'</td>'
       +'<td data-l="Scheduled">'+dateInp("gmc",g)+'</td><td data-l="Status">'+statusSel("gmc",g)+'</td>'
       +'<td data-l="Report">'+reportSel("gmc",g)+'</td><td data-l="QTN">'+qtnSel("gmc",g)+'</td>'
@@ -1862,7 +2066,7 @@ function viewCall(){
       +'<td data-l="Caller">'+esc(o.caller||"\u2014")+(o.phone?'<span class="sub">'+esc(o.phone)+'</span>':'')+'</td>'
       +'<td class="site-name" data-l="Client / site">'+esc(o.client)+(o.location?'<span class="sub">'+esc(o.location)+'</span>':'')+'</td>'
       +'<td data-l="Issue">'+esc(o.issue)+'</td>'
-      +'<td data-l="Attended by">'+(techNames(o.techIds)||'<span class="sub">\u2014</span>')+'</td>'
+      +'<td data-l="Attended by">'+(techChips(o.techIds)||'<span class="sub">\u2014</span>')+'</td>'
       +'<td data-l="Status"><span class="pill '+(o.status==="Closed"?"ok":(o.status==="Attended"?"due":"over"))+'">'+esc(o.status)+'</span></td>'
       +'<td class="num" data-l="GMC no">'+esc(o.gmcNo||"\u2014")+'</td>'
       +'<td data-l=""><button class="link" data-call="'+o.id+'">Open</button></td></tr>';});
@@ -1978,7 +2182,7 @@ function viewDuty(){
   var _wn=["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"][_dt.getDay()];
   var _men={};_dl.forEach(function(x){(x.techIds||[]).forEach(function(t){_men[t]=1;});});
   var dayH='<div class="card"><h2>Duty for the day <span class="count">'+_dl.length+' site(s)</span></h2>'
-    +'<div class="body"><div class="toolbar" style="margin:0 0 9px">'
+    +'<div class="body"><div class="toolbar stickbar" style="margin:0 0 9px">'
     +'<input type="date" id="dutyDayIn" value="'+esc(_dd)+'" style="max-width:170px">'
     +'<button class="btn ghost" data-dday="today">Today</button>'
     +'<strong style="margin-left:4px;color:var(--navy)">'+_wn+'</strong>'
@@ -1994,7 +2198,7 @@ function viewDuty(){
     _dl.forEach(function(d){
       var sysx=dutySystemOf(d),actx=d.activity||"";
       if(sysx&&actx==="AMC")actx+=" ("+sysx+")";
-      dayH+='<tr><td data-l="Name">'+esc(techNames(d.techIds)||"\u2014")+'</td>'
+      dayH+='<tr><td data-l="Name">'+(techChips(d.techIds)||'<span class="sub">\u2014</span>')+'</td>'
         +'<td class="site-name" data-l="Site">'+esc(d.siteText)+(d.location?", "+esc(d.location):"")+'</td>'
         +'<td data-l="Activity">'+esc(actx)+'</td></tr>';});
     dayH+='</tbody></table></div>'
@@ -2048,7 +2252,7 @@ function viewDuty(){
         var mine=sites[s].filter(function(x){return x.date===ds;});
         h+='<td>'+mine.map(function(x){
           return '<button class="chip '+esc((x.activity||"").replace(/ /g,"-"))+'" data-duty="'+x.id+'">'
-            +'<strong>'+esc(techNames(x.techIds)||"No technician")+'</strong>'
+            +(techChips(x.techIds)||'<strong>No technician</strong>')
             +'<span>'+esc(x.activity)+' \u00b7 '+((x.techIds||[]).length)+' man</span></button>';}).join("")+'</td>';});
       h+='</tr>';});
   }
@@ -2066,7 +2270,7 @@ function viewDuty(){
   list.forEach(function(d){
     h+='<tr><td class="num" data-l="Date">'+fmt(d.date)+'</td><td class="site-name" data-l="Site">'+esc(d.siteText)+'</td>'
       +'<td data-l="Activity">'+esc(d.activity)+'</td><td class="num" data-l="Manpower">'+((d.techIds||[]).length)+'</td>'
-      +'<td data-l="Technicians">'+esc(techNames(d.techIds))+'</td><td data-l="Location">'+esc(d.location||"")+'</td>'
+      +'<td data-l="Technicians">'+(techChips(d.techIds)||'<span class="sub">\u2014</span>')+'</td><td data-l="Location">'+esc(d.location||"")+'</td>'
       +'<td data-l="Remarks">'+esc(d.remarks||"")+'</td>'
       +'<td data-l=""><button class="link" data-duty="'+d.id+'">Edit</button></td></tr>';});
   return h+'</tbody></table></div></div></div>';
@@ -2451,7 +2655,7 @@ function viewFiles(){
       +'<td class="num" data-l="SR / JCC no">'+esc(f.srNo||"\u2014")+'</td>'
       +'<td class="num" data-l="Service">'+esc(f.serviceNo||"\u2014")+'</td>'
       +'<td class="num" data-l="Date">'+fmt(f.date)+'</td>'
-      +'<td data-l="Technicians">'+(techNames(f.techs)||'<span class="sub">\u2014</span>')+'</td>'
+      +'<td data-l="Technicians">'+(techChips(f.techs)||'<span class="sub">\u2014</span>')+'</td>'
       +'<td data-l="Where">'+(f.drive?'<span class="pill ok">In Drive</span>':'<span class="pill hold">This device</span>')+'</td>'
       +'<td data-l=""><button class="link" data-fopen="'+f.id+'">Open</button>'
       +'<button class="link" data-fshare="'+f.id+'">Share</button>'
@@ -2759,6 +2963,122 @@ function shareMonthPack(){
   else copyText(txt);}
 
 /* ================= month report ================= */
+
+/* ---------- what is still outstanding at month end ---------- */
+function daysSince(ds){
+  if(!ds)return null;
+  var d=parseISO(ds);
+  if(!d)return null;
+  return Math.round((today().getTime()-d.getTime())/86400000);}
+
+function pendingRows(month){
+  var m=month||state.curMonth,out=[];
+  amcOf(m).filter(function(a){return outstanding(a.status);}).forEach(function(a){
+    out.push({kind:"AMC",no:a.amcNo,site:a.site,
+      scope:(a.system||"")+(a.serviceNo?" · "+a.serviceNo:""),
+      techs:techNames(a.techs)||a.techText||"",
+      status:a.status,sched:a.schedDate||"",
+      days:daysSince(a.schedDate),id:a.id,location:a.location||""});});
+  state.gmc.filter(function(g){
+    return outstanding(g.status)&&(!g.month||g.month<=m);
+  }).forEach(function(g){
+    out.push({kind:"GMC",no:g.gmcNo,site:g.clientRaw||g.client||"",
+      scope:g.desc||g.scope||"",
+      techs:techNames(g.techs)||"",
+      status:g.status,sched:g.schedDate||"",
+      days:daysSince(g.schedDate||(g.month?g.month+"-01":"")),id:g.id,location:g.location||""});});
+  (state.oncall||[]).filter(function(o){
+    return o.status!=="Closed"&&(!o.date||monthOf(o.date)<=m);
+  }).forEach(function(o){
+    out.push({kind:"On-call",no:o.gmcNo||"",site:o.client||"",
+      scope:o.issue||"",techs:techNames(o.techIds)||"",
+      status:o.status,sched:o.date||"",
+      days:daysSince(o.date),id:o.id,location:o.location||""});});
+  out.sort(function(a,b){
+    var da=(a.days===null?-1:a.days),db=(b.days===null?-1:b.days);
+    if(da!==db)return db-da;
+    return (a.site||"")<(b.site||"")?-1:1;});
+  return out;}
+
+function pendingText(month){
+  var m=month||state.curMonth,L=pendingRows(m);
+  var t="GSSC — MONTH-END PENDING\n"+mLabel(m)+"  (as at "+fmt(iso(today()))+")\n";
+  if(!L.length)return t+"\nNothing outstanding. Every AMC service, GMC job and on-call for this month is closed.";
+  var by={};L.forEach(function(r){(by[r.kind]=by[r.kind]||[]).push(r);});
+  ["AMC","GMC","On-call"].forEach(function(k){
+    var g=by[k];
+    if(!g||!g.length)return;
+    t+="\n"+k.toUpperCase()+" — "+g.length+" outstanding\n";
+    g.forEach(function(r,i){
+      t+="\n"+(i+1)+". "+(r.no?r.no+"  ":"")+r.site+(r.location?"  ("+r.location+")":"")
+        +"\n   "+(r.scope||"—")
+        +"\n   status: "+r.status
+        +(r.sched?"   scheduled: "+fmt(r.sched):"   no date set")
+        +(r.days!==null&&r.days>0?"   "+r.days+" day(s) outstanding":"")
+        +(r.techs?"\n   "+r.techs:"")+"\n";});});
+  t+="\nTotal outstanding: "+L.length;
+  return t;}
+
+function pendingModal(){
+  var m=state.curMonth,L=pendingRows(m);
+  var body='<div class="info">'+(L.length
+      ?'<b>'+L.length+'</b> item(s) still open for '+esc(mLabel(m))+'.'
+      :'Nothing outstanding for '+esc(mLabel(m))+'.')+'</div>';
+  if(L.length){
+    body+='<div class="tbl-wrap" style="max-height:48vh;overflow-y:auto"><table class="rsp"><thead><tr>'
+      +'<th>Type</th><th>No</th><th>Site</th><th>Scope</th><th>Technicians</th>'
+      +'<th>Status</th><th>Days out</th></tr></thead><tbody>';
+    L.forEach(function(r){
+      body+='<tr'+(r.days!==null&&r.days>0?' class="f-over"':'')+'>'
+        +'<td data-l="Type"><span class="pill '+(r.kind==="GMC"?"gmc":"amc")+'">'+esc(r.kind)+'</span></td>'
+        +'<td class="num site-name" data-l="No">'+esc(r.no||"—")+'</td>'
+        +'<td data-l="Site">'+esc(r.site)+'</td>'
+        +'<td data-l="Scope">'+esc((r.scope||"").slice(0,70))+'</td>'
+        +'<td data-l="Technicians">'+(techChips(null,r.techs)||'<span class="sub">not assigned</span>')+'</td>'
+        +'<td data-l="Status">'+esc(r.status)+'</td>'
+        +'<td class="num" data-l="Days out">'+(r.days!==null&&r.days>0?r.days:'<span class="sub">—</span>')+'</td></tr>';});
+    body+='</tbody></table></div>'
+      +'<p class="hint">Days outstanding counts from the scheduled date. Rows in red are past it.</p>';}
+  openModal("Month-end pending — "+mLabel(m),body,null,
+    (L.length?'<button class="btn ghost" id="pendCopy">Copy as text</button>'
+      +'<button class="btn ghost" id="pendXl">Export Excel</button>'
+      +(agentReady()?'<button class="btn" id="pendAsk">Ask Claude to write it up</button>':""):""),
+    true,null,null);
+  var c=document.getElementById("pendCopy");
+  if(c)c.onclick=function(){copyText(pendingText(m),"Pending list copied");};
+  var x=document.getElementById("pendXl");
+  if(x)x.onclick=function(){pendingExcel(m);};
+  var a=document.getElementById("pendAsk");
+  if(a)a.onclick=function(){
+    closeModal();
+    tab="agent";render();
+    agentAsk("Write the month-end pending summary for "+mLabel(m)
+      +". Group it by AMC, GMC and on-call. For each one give the site, the job or contract number, "
+      +"who is assigned, what is still outstanding, and how many days it has been outstanding. "
+      +"Finish with the two or three sites that need chasing first.");};}
+
+function copyText(txt,msg){
+  function fallback(){
+    var ta=document.createElement("textarea");ta.value=txt;
+    ta.style.position="fixed";ta.style.opacity="0";document.body.appendChild(ta);
+    ta.select();
+    try{document.execCommand("copy");toast(msg||"Copied");}
+    catch(e){toast("Could not copy — select the text and copy by hand");}
+    document.body.removeChild(ta);}
+  if(navigator.clipboard&&navigator.clipboard.writeText)
+    navigator.clipboard.writeText(txt).then(function(){toast(msg||"Copied");},fallback);
+  else fallback();}
+
+function pendingExcel(month){
+  var m=month||state.curMonth,L=pendingRows(m);
+  var rows=[["Type","Number","Site","Location","Pending scope","Technicians","Status","Scheduled","Days outstanding"]];
+  L.forEach(function(r){
+    rows.push([r.kind,r.no,r.site,r.location,r.scope,r.techs,r.status,
+      r.sched?fmt(r.sched):"",(r.days!==null&&r.days>0)?r.days:""]);});
+  var wb=XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb,sheetFrom(rows),"Pending");
+  XLSX.writeFile(wb,"GSSC_Pending_"+m+".xlsx");}
+
 function viewReport(){
   var m=state.curMonth,A=amcOf(m),G=gmcOf(m),C=callsOf(m);
   function bucket(arr,f){return arr.filter(f);}
@@ -2773,8 +3093,12 @@ function viewReport(){
       gO=bucket(G,function(x){return x.status==="Ongoing"||x.status==="Balance Work";}),
       gP=bucket(G,function(x){return x.status==="Open";}),
       gH=bucket(G,function(x){return x.status==="On Hold";});
+  var pend=pendingRows(m);
   var h='<div class="toolbar"><strong style="color:var(--navy);font-size:16px">Month-end summary &mdash; '+esc(mLabel(m))+'</strong>'
-    +'<span class="spacer"></span><button class="btn ghost" data-export="report">Export Excel</button>'
+    +'<span class="spacer"></span>'
+    +'<button class="btn'+(pend.length?'':' ghost')+'" id="pendBtn">What is still pending'
+      +(pend.length?' <span class="count">'+pend.length+'</span>':'')+'</button>'
+    +'<button class="btn ghost" data-export="report">Export Excel</button>'
     +'<button class="btn ghost" data-print="1">PDF / print</button></div>';
   h+='<div class="stats">'
     +stat("green","AMC completed",aC.length+" / "+A.length,"services signed off")
@@ -3057,7 +3381,7 @@ function monthDeleteModal(){
 function amcModal(a){
   var isNew=!a;
   a=a||{id:"",month:state.curMonth,contractId:"",amcNo:"",site:"",system:"",serviceNo:"1st Serv",client:"",
-    location:"Dammam",freq:"Quarterly",contractStatus:"Active",status:"Open",schedDate:"",doneDate:"",
+    location:"",freq:"Quarterly",contractStatus:"Active",status:"Open",schedDate:"",doneDate:"",
     report:"Not submitted",qtn:"Not required",techs:[],srNo:"",techText:"",notes:""};
   var body='<div class="grid2">'
     +'<div class="field"><label>AMC no</label><input id="fNo" value="'+esc(a.amcNo)+'"></div>'
@@ -3070,7 +3394,7 @@ function amcModal(a){
     +'<div class="field"><label>System</label><input id="fSys" value="'+esc(a.system)+'"></div>'
     +'<div class="grid2">'
     +'<div class="field"><label>Client group</label><input id="fClient" value="'+esc(a.client)+'"></div>'
-    +'<div class="field"><label>Location</label><select id="fLoc">'+opts(LOCATIONS,a.location)+'</select></div>'
+    +'<div class="field"><label>Location</label><select id="fLoc">'+locOpts(a.location)+'</select></div>'
     +'<div class="field"><label>Scheduled service date</label><input type="date" id="fSched" value="'+esc(a.schedDate)+'"></div>'
     +'<div class="field"><label>Completed on</label><input type="date" id="fDone" value="'+esc(a.doneDate)+'"></div>'
     +'<div class="field"><label>Status</label><select id="fStat">'+opts(AMC_STATUS,a.status)+'</select></div>'
@@ -3101,10 +3425,71 @@ function amcModal(a){
   if(d)d.onclick=function(){state.amc=state.amc.filter(function(x){return x.id!==a.id;});closeModal();commit("Deleted");};
 }
 
+
+/* ---------- quotation line items against a GMC job ---------- */
+var QTN_UNITS=["No","Set","Mtr","Ltr","Kg","Lot","Hr","Pkt","Roll"];
+function qtnItems(g){return (g&&g.items)||[];}
+function qtnRowHtml(it,i){
+  it=it||{desc:"",part:"",qty:"",unit:"No",scope:"Supply & install",extra:false};
+  return '<tr data-qi="'+i+'">'
+    +'<td data-l="Item"><input class="qi-desc" value="'+esc(it.desc||"")+'" placeholder="description"></td>'
+    +'<td data-l="Part no"><input class="qi-part" value="'+esc(it.part||"")+'" placeholder="part no"></td>'
+    +'<td data-l="Qty"><input class="qi-qty" inputmode="decimal" value="'+esc(it.qty||"")+'" style="max-width:72px"></td>'
+    +'<td data-l="Unit"><select class="qi-unit">'+opts(QTN_UNITS,it.unit||"No")+'</select></td>'
+    +'<td data-l="Scope"><select class="qi-scope">'+opts(["Supply & install","Supply only","Install only","Service only"],it.scope||"Supply & install")+'</select></td>'
+    +'<td data-l="Extra"><label class="qi-x"><input type="checkbox" class="qi-extra"'+(it.extra?" checked":"")+'> extra</label></td>'
+    +'<td data-l=""><button type="button" class="link danger qi-del">Remove</button></td></tr>';}
+function qtnTableHtml(g){
+  var L=qtnItems(g);
+  var h='<div class="field"><label>Quotation items <span class="count" id="qiCount">'+L.length+'</span></label>'
+    +'<p class="hint" style="margin:0 0 7px">The approved QTN scope, line by line. Tick <b>extra</b> for anything added on site that was not in the original quotation.</p>'
+    +'<div class="tbl-wrap"><table class="rsp qi-tbl" id="qiTbl"><thead><tr>'
+    +'<th>Item</th><th>Part no</th><th>Qty</th><th>Unit</th><th>Scope</th><th>Extra</th><th></th>'
+    +'</tr></thead><tbody id="qiBody">';
+  if(!L.length)h+=qtnRowHtml(null,0);
+  else L.forEach(function(it,i){h+=qtnRowHtml(it,i);});
+  h+='</tbody></table></div>'
+    +'<button type="button" class="btn ghost" id="qiAdd" style="margin-top:8px">Add line</button></div>';
+  return h;}
+function qtnRead(){
+  var out=[];
+  Array.prototype.forEach.call(document.querySelectorAll("#qiBody tr"),function(tr){
+    var gv=function(c){var el=tr.querySelector("."+c);return el?String(el.value||"").trim():"";};
+    var ck=tr.querySelector(".qi-extra");
+    var desc=gv("qi-desc"),part=gv("qi-part"),qty=gv("qi-qty");
+    if(!desc&&!part&&!qty)return;
+    out.push({desc:desc,part:part,qty:qty,unit:gv("qi-unit"),scope:gv("qi-scope"),extra:!!(ck&&ck.checked)});});
+  return out;}
+function qtnWire(){
+  var add=document.getElementById("qiAdd"),body=document.getElementById("qiBody");
+  if(!add||!body)return;
+  var recount=function(){
+    var c=document.getElementById("qiCount");
+    if(c)c.textContent=body.querySelectorAll("tr").length;};
+  add.onclick=function(){
+    var tmp=document.createElement("tbody");
+    tmp.innerHTML=qtnRowHtml(null,body.querySelectorAll("tr").length);
+    body.appendChild(tmp.firstChild);recount();};
+  body.addEventListener("click",function(e){
+    var d=e.target.closest(".qi-del");
+    if(!d)return;
+    var tr=d.closest("tr");
+    if(body.querySelectorAll("tr").length===1){
+      Array.prototype.forEach.call(tr.querySelectorAll("input"),function(x){
+        if(x.type==="checkbox")x.checked=false;else x.value="";});}
+    else tr.parentNode.removeChild(tr);
+    recount();});}
+function qtnSummary(g){
+  var L=qtnItems(g);
+  if(!L.length)return "";
+  var ex=L.filter(function(x){return x.extra;}).length;
+  return '<span class="sub">'+L.length+' QTN item'+(L.length===1?"":"s")
+    +(ex?", "+ex+" extra":"")+'</span>';}
+
 function gmcModal(g){
   var isNew=!g;
   g=g||{id:"",month:state.curMonth,gmcNo:suggestGmc(),clientRaw:"",client:"",desc:"",scope:"",jccNo:"",jccDate:"",
-    status:"Open",report:"Not submitted",qtn:"To be sent",schedDate:"",doneDate:"",techs:[],remarks:"",location:"Dammam"};
+    status:"Open",report:"Not submitted",qtn:"To be sent",schedDate:"",doneDate:"",techs:[],remarks:"",location:""};
   var body='<div class="grid2">'
     +'<div class="field"><label>GMC / OSF no</label><input id="fNo" value="'+esc(g.gmcNo)+'" placeholder="80099 \u2014 P is added for you"></div>'
     +'<div class="field"><label>Client group</label><input id="fClient" value="'+esc(g.client)+'"></div></div>'
@@ -3113,7 +3498,7 @@ function gmcModal(g){
     +'<div class="field"><label>Detailed scope (from quotation)</label><textarea id="fScope">'+esc(g.scope||"")+'</textarea></div>'
     +'<div class="grid2">'
     +'<div class="field"><label>Month</label><input id="fMonth" value="'+esc(g.month||state.curMonth)+'" placeholder="YYYY-MM"></div>'
-    +'<div class="field"><label>Location</label><select id="fLoc">'+opts(LOCATIONS,g.location)+'</select></div>'
+    +'<div class="field"><label>Location</label><select id="fLoc">'+locOpts(g.location)+'</select></div>'
     +'<div class="field"><label>Scheduled date</label><input type="date" id="fSched" value="'+esc(g.schedDate)+'"></div>'
     +'<div class="field"><label>Completed on</label><input type="date" id="fDone" value="'+esc(g.doneDate)+'"></div>'
     +'<div class="field"><label>Status</label><select id="fStat">'+opts(GMC_STATUS,g.status)+'</select></div>'
@@ -3130,18 +3515,21 @@ function gmcModal(g){
       +'">Add this job to Google Calendar</a></p>':"")
     +'<div class="field"><label>Technicians</label>'+checksHtml("fTechs",g.techs)+'</div>'
     +'<div class="field"><label>Progress remark (technicians can see this)</label><textarea id="fProg">'+esc(g.progress||"")+'</textarea></div>'
+    +qtnTableHtml(g)
     +'<div class="field"><label>Remarks (private, technicians cannot see)</label><textarea id="fRem">'+esc(g.remarks||"")+'</textarea></div>';
   openModal(isNew?"Log GMC job":g.gmcNo+" \u2014 "+g.client,body,function(){
     if(!val("fNo"))return mErr("Enter the GMC / OSF number.");
     var rec={id:g.id||uid(),month:val("fMonth")||state.curMonth,gmcNo:gmcNorm(val("fNo")),clientRaw:val("fRaw")||val("fClient"),
       client:val("fClient")||val("fRaw"),desc:val("fDesc"),scope:val("fScope"),jccNo:val("fJcc"),jccDate:val("fJccD"),doneBy:val("fBy"),
       status:val("fStat"),report:val("fRep"),qtn:val("fQtn"),schedDate:val("fSched"),doneDate:val("fDone"),
-      techs:checked("fTechs"),remind:+val("fRm"),remarks:val("fRem"),progress:val("fProg"),location:val("fLoc")};
+      techs:checked("fTechs"),remind:+val("fRm"),remarks:val("fRem"),progress:val("fProg"),location:val("fLoc"),
+      items:qtnRead()};
     if(g.id){for(var i=0;i<state.gmc.length;i++)if(state.gmc[i].id===g.id)state.gmc[i]=rec;}
     else state.gmc.push(rec);
     draftDel("gmc-"+(g.id||"new"));closeModal();commit("Saved");
   },isNew?"":'<button class="btn danger" id="mDel">Delete</button>',false,
     "gmc-"+(g.id||"new"),(g.gmcNo?("GMC "+g.gmcNo):"New GMC job"));
+  qtnWire();
   var d=document.getElementById("mDel");
   if(d)d.onclick=function(){state.gmc=state.gmc.filter(function(x){return x.id!==g.id;});closeModal();commit("Deleted");};
 }
@@ -3231,7 +3619,7 @@ function callImportModal(recs,src){
       var st=r.status||"";
       if(!/^(open|closed|in progress)$/i.test(st))st=r.completedDate?"Closed":"Open";
       state.oncall.push({id:uid(),date:r.date||iso(today()),time:r.time||"",
-        caller:r.caller||"",phone:r.phone||"",client:r.client,location:"Dammam",
+        caller:r.caller||"",phone:r.phone||"",client:r.client,location:"",
         issue:r.issue||"",techIds:ids,status:st,gmcNo:r.gmcNo||"",attendedAt:"",
         completedDate:r.completedDate||"",remarks:[r.remarks,left.join(", ")].filter(Boolean).join(" \u00b7 ")});
       have[k]=1;added++;});
@@ -3275,7 +3663,7 @@ function callModal(o){
   var isNew=!o;
   var now=new Date();
   o=o||{id:"",date:iso(today()),time:pad(now.getHours())+":"+pad(now.getMinutes()),caller:"",phone:"",
-    client:"",location:"Dammam",issue:"",techIds:[],status:"Open",gmcNo:"",attendedAt:"",
+    client:"",location:"",issue:"",techIds:[],status:"Open",gmcNo:"",attendedAt:"",
     completedDate:"",remarks:""};
   var clients={};state.amc.concat(state.gmc).forEach(function(x){clients[x.client]=1;});
   var body='<div class="grid2">'
@@ -3290,7 +3678,7 @@ function callModal(o){
     +'<datalist id="clientNames">'+Object.keys(clients).map(function(k){return '<option value="'+esc(k)+'">';}).join("")+'</datalist></div>'
     +'<div class="field"><label>Issue reported</label><textarea id="fIssue">'+esc(o.issue)+'</textarea></div>'
     +'<div class="grid2">'
-    +'<div class="field"><label>Location</label><select id="fLoc">'+opts(LOCATIONS,o.location)+'</select></div>'
+    +'<div class="field"><label>Location</label><select id="fLoc">'+locOpts(o.location)+'</select></div>'
     +'<div class="field"><label>Attended at</label><input type="time" id="fAtt" value="'+esc(o.attendedAt||"")+'"></div>'
     +'<div class="field"><label>Completed on</label><input type="date" id="fDone" value="'+esc(o.completedDate||"")+'"></div>'
     +'<div class="field"><label>Status</label><select id="fStat">'+opts(CALL_STATUS,o.status)+'</select></div>'
@@ -3598,7 +3986,7 @@ function amcBatchModal(entries){
         var c=null;state.contracts.forEach(function(x){if(x.amcNo===r.amcNo)c=x;});
         if(!c){c={id:uid(),amcNo:r.amcNo,site:r.site,system:r.system,manpower:0,days:0,manhours:0,
           freq:r.freq||"Quarterly",serviceNo:r.serviceNo,value:0,payment:"",
-          contractStatus:r.contractStatus,location:"Dammam"};state.contracts.push(c);}
+          contractStatus:r.contractStatus,location:""};state.contracts.push(c);}
         var past=mIdx(e.month)<mIdx(mKey(today()));
         var fromSheet=r.sheetStatus||"";
         var ids=[],leftover=[];
@@ -3611,7 +3999,7 @@ function amcBatchModal(entries){
           :(r.srNo?((st==="Completed")?"Signed / JCC received":"Submitted"):"Not submitted");
         var cs=(st==="Under Renewal")?"Under Renewal":((st==="On Hold")?"On Hold":r.contractStatus);
         var fresh={id:uid(),month:e.month,contractId:c.id,amcNo:r.amcNo,site:r.site,
-          system:r.system||c.system,serviceNo:r.serviceNo,client:r.site,location:c.location||"Dammam",
+          system:r.system||c.system,serviceNo:r.serviceNo,client:r.site,location:c.location||"",
           freq:r.freq||c.freq,contractStatus:cs,status:st,srNo:r.srNo||"",
           schedDate:r.servDate||"",doneDate:(st==="Completed")?(r.servDate||""):"",
           report:repSt,qtn:"Not required",techs:ids,techText:leftover.join(", "),notes:r.remark};
@@ -3626,7 +4014,7 @@ function amcBatchModal(entries){
         state.amc.push(fresh);have[k]=fresh;
         if(mkDuty&&r.servDate&&ids.length)
           state.duties.push({id:uid(),date:r.servDate,ref:"",siteText:r.amcNo+" \u00b7 "+r.site,
-            activity:"AMC",location:c.location||"Dammam",techIds:ids,remarks:r.srNo?("SR "+r.srNo):""});
+            activity:"AMC",location:c.location||"",techIds:ids,remarks:r.srNo?("SR "+r.srNo):""});
         lines++;});});
     var keys=Object.keys(months).sort();
     state.curMonth=keys[keys.length-1];
@@ -3776,7 +4164,7 @@ function importGmcRecords(recs,srcMonth){
         jccNo:r.jccNo,jccDate:r.jccDate,status:r.status,
         report:r.status==="Completed"?"Signed / JCC received":"Not submitted",
         qtn:r.status==="Completed"?"Approved":"Sent",schedDate:"",
-        doneDate:r.status==="Completed"?r.jccDate:"",techs:[],remarks:r.remarks,location:"Dammam"});});
+        doneDate:r.status==="Completed"?r.jccDate:"",techs:[],remarks:r.remarks,location:""});});
     upd.forEach(function(u){
       u.ex.status=u.rec.status;
       if(u.rec.jccNo)u.ex.jccNo=u.rec.jccNo;
@@ -3911,14 +4299,16 @@ function wire(){
         tr.style.display=(okM&&(!ct||tr.dataset.fcat===ct))?"":"none";});
       return;}
     if(t.id==="dutyDayIn"){dutyDay=t.value||null;render();return;}
-    if(t.id==="amcStat")filt("amcTbl","amcQ","amcStat");
-    if(t.id==="gmcStat"||t.id==="gmcMonth")filt("gmcTbl","gmcQ","gmcStat","gmcMonth");
+    if(t.id==="amcStat"||t.id==="amcLoc")filt("amcTbl","amcQ","amcStat",null,"amcLoc");
+    if(t.id==="conLoc")filt("conTbl","conQ",null,null,"conLoc");
+    if(t.id==="gmcStat"||t.id==="gmcMonth"||t.id==="gmcLoc")filt("gmcTbl","gmcQ","gmcStat","gmcMonth","gmcLoc");
   });
   v.addEventListener("input",function(e){
     if(e.target.id==="q"){query=e.target.value;var pos=e.target.selectionStart;selClient="";render();
       var n=document.getElementById("q");if(n){n.focus();n.setSelectionRange(pos,pos);}}
-    if(e.target.id==="amcQ")filt("amcTbl","amcQ","amcStat");
-    if(e.target.id==="gmcQ")filt("gmcTbl","gmcQ","gmcStat","gmcMonth");
+    if(e.target.id==="amcQ")filt("amcTbl","amcQ","amcStat",null,"amcLoc");
+    if(e.target.id==="conQ")filt("conTbl","conQ",null,null,"conLoc");
+    if(e.target.id==="gmcQ")filt("gmcTbl","gmcQ","gmcStat","gmcMonth","gmcLoc");
   });
   v.addEventListener("click",function(e){
     var b=e.target.closest("button");if(!b)return;
@@ -4010,6 +4400,10 @@ function wire(){
     if(b.id==="waAdd"){waModal(-1);return;}
     if(b.id==="logClear"){state.log=[];save();render();toast("List cleared");return;}
     if(b.id==="dupChk"){dupModal();return;}
+    if(b.id==="pendBtn"){pendingModal();return;}
+    if(b.dataset.amcview){amcView=b.dataset.amcview;render();return;}
+    if(b.dataset.gmcview){gmcView=b.dataset.gmcview;render();return;}
+    if(b.dataset.dutypick){dutyPick=b.dataset.dutypick;render();return;}
     if(b.id==="scriptChk"){scriptCheck();return;}
     if(b.id==="chatGo"){
       var q=(document.getElementById("chatIn")||{}).value||"";
@@ -4030,14 +4424,34 @@ function wire(){
       state=JSON.parse(JSON.stringify(SEED));commit("Reset");return;}
   });
 }
-function filt(tbl,qi,si,mi){
+function filt(tbl,qi,si,mi,li){
   var q=(document.getElementById(qi)||{value:""}).value.toLowerCase();
   var s=(document.getElementById(si)||{value:""}).value;
   var mm=mi?(document.getElementById(mi)||{value:""}).value:"";
+  var lo=li?(document.getElementById(li)||{value:""}).value:"";
+  var shown=0;
   Array.prototype.forEach.call(document.querySelectorAll("#"+tbl+" tbody tr"),function(tr){
     if(!tr.dataset.row)return;
-    tr.style.display=(tr.dataset.row.indexOf(q)>-1&&(!s||tr.dataset.stat===s)&&(!mm||tr.dataset.month===mm))?"":"none";});
+    var on=tr.dataset.row.indexOf(q)>-1&&(!s||tr.dataset.stat===s)
+      &&(!mm||tr.dataset.month===mm)&&(!lo||tr.dataset.loc===lo);
+    tr.style.display=on?"":"none";
+    if(on)shown++;});
+  var c=document.getElementById(tbl+"Count");
+  if(c)c.textContent=shown+" shown";
 }
+/* every location that actually appears in the records, plus the standard list */
+function locsPresent(){
+  var s={};
+  state.amc.forEach(function(a){if(a.location)s[a.location]=1;});
+  state.gmc.forEach(function(g){if(g.location)s[g.location]=1;});
+  state.oncall.forEach(function(o){if(o.location)s[o.location]=1;});
+  state.contracts.forEach(function(c){if(c.location)s[c.location]=1;});
+  return Object.keys(s).sort();}
+function locFilter(id){
+  var L=locsPresent();
+  if(!L.length)return "";
+  return '<select class="filter" id="'+id+'"><option value="">All locations</option>'
+    +L.map(function(k){return '<option value="'+esc(k)+'">'+esc(k)+'</option>';}).join("")+'</select>';}
 var importKind="amc";
 function askFile(kind){importKind=kind;document.getElementById("fileIn").click();}
 document.getElementById("fileIn").addEventListener("change",function(){
@@ -4069,6 +4483,7 @@ document.getElementById("agentIn").addEventListener("change",function(){
   if(picked.length)agentReadFile(picked[0]);
   else toast("No picture was chosen");
 });
+window.addEventListener("resize",stickHeight);
 document.getElementById("themeBtn").addEventListener("click",function(){
   var i=0;THEMES.forEach(function(x,ix){if(x[0]===SETT.theme)i=ix;});
   var nx=THEMES[(i+1)%THEMES.length];
