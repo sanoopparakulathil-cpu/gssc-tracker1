@@ -1,0 +1,4 @@
+# Never commit a build that carries real client data
+index-with-data.html
+index-with-data*.html
+*.zip
