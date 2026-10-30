@@ -250,7 +250,7 @@
   </div>
   <div class="top-right"><button id="themeBtn" title="Change colours" style="background:none;border:1px solid currentColor;
     color:inherit;border-radius:3px;font-family:inherit;font-size:11px;padding:2px 7px;cursor:pointer;opacity:.8">Theme</button>
-    <span style="opacity:.75">v31</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
+    <span style="opacity:.75">v32</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
 </header>
 
 <nav class="tabs" role="tablist">
@@ -525,13 +525,25 @@ function agentContext(q){
       freq:c.freq,status:c.contractStatus};})};
   return JSON.stringify(ctx);}
 
-var WANT_SCRIPT="2026-08-29-c";
+var WANT_SCRIPT="2026-10-30-equip";
 function scriptCheck(){
   if(!agentReady())return toast("Link this device first");
   toast("Checking the script\u2026");
   agentPost({action:"ping"},function(o){
     var body;
-    if(!o.ok&&!o.version&&/wrong key/i.test(String(o.error||""))){
+    if(!o.ok&&!o.version&&/could not reach|failed to fetch|no connection|networkerror/i.test(String(o.error||""))){
+      body='<div class="info" style="background:#FCE9E9;border-color:#E9B7B7">'
+        +'<b>The address did not answer.</b><br>Nothing came back at all, so this is not about the code '
+        +'in your script \u2014 the app is calling an address that is not reachable.</div>'
+        +'<p>Most likely one of these:</p><ol style="padding-left:18px;line-height:1.7">'
+        +'<li>The address saved here points at an old or archived deployment. '
+        +'Open <b>Deploy \u203a Manage deployments</b>, copy the <b>Web app URL</b> of the one you are updating, '
+        +'and paste it into <b>Change link</b> above.</li>'
+        +'<li>That deployment\u2019s <b>Who has access</b> is not set to <b>Anyone</b>. '
+        +'It must be Anyone \u2014 your secret is what protects it.</li>'
+        +'<li>No internet on this device.</li></ol>'
+        +'<p class="hint">It said: \u201c'+esc(o.error||"")+'\u201d</p>';
+    }else if(!o.ok&&!o.version&&/wrong key/i.test(String(o.error||""))){
       body='<div class="info" style="background:#FCE9E9;border-color:#E9B7B7">'
         +'<b>The secret does not match.</b><br>The script answered, so it is deployed and reachable \u2014 '
         +'but the secret saved on this device is not the same as the one on the <b>KEY</b> line of the script.</div>'
