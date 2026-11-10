@@ -263,7 +263,7 @@
   </div>
   <div class="top-right"><button id="themeBtn" title="Change colours" style="background:none;border:1px solid currentColor;
     color:inherit;border-radius:3px;font-family:inherit;font-size:11px;padding:2px 7px;cursor:pointer;opacity:.8">Theme</button>
-    <span style="opacity:.75">v36</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
+    <span style="opacity:.75">v37</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
 </header>
 
 <nav class="tabs" role="tablist">
@@ -538,7 +538,7 @@ function agentContext(q){
       freq:c.freq,status:c.contractStatus};})};
   return JSON.stringify(ctx);}
 
-var WANT_SCRIPT="2026-11-10-cal-act";
+var WANT_SCRIPT="2026-11-10-gcal";
 function scriptCheck(){
   if(!agentReady())return toast("Link this device first");
   toast("Checking the script\u2026");
@@ -2965,11 +2965,23 @@ function calendarHowTo(){
   if(g)g.onclick=function(){downloadIcs();closeModal();};}
 
 /* ---------- month calendar ---------- */
+var GCAL={key:"",ev:[],err:""};
+function gcalEnsure(m,start,last,force){
+  if(!agentReady()||(!force&&GCAL.key===m))return;
+  GCAL.key=m;
+  techPost({action:"a_gcal",from:iso(start),to:iso(addDays(last,7))}).then(function(o){
+    if(o&&o.ok){GCAL.ev=o.events||[];GCAL.err="";}
+    else{GCAL.ev=[];GCAL.err=(o&&o.error)||"failed";}
+    if(tab==="cal")render();
+    if(force)toast(GCAL.err?("Google Calendar: "+GCAL.err):(GCAL.ev.length+" Google Calendar item(s) loaded"));
+  }).catch(function(){GCAL.err="no connection";});}
 function viewCal(){
   var m=calMonth||state.curMonth;
   var p=m.split("-"),y=+p[0],mo=+p[1]-1;
   var first=new Date(y,mo,1),start=mondayOf(first),last=new Date(y,mo+1,0);
+  gcalEnsure(m,start,last,false);
   var evs={},t=iso(today());
+  GCAL.ev.forEach(function(g){(evs[g.date]=evs[g.date]||[]).push({kind:"GCAL",title:(g.time?g.time+" ":"")+g.title,date:g.date});});
   jobEvents().forEach(function(e){(evs[e.date]=evs[e.date]||[]).push(e);});
   state.amc.forEach(function(a){
     if(a.schedDate&&done(a.status))
@@ -2985,6 +2997,7 @@ function viewCal(){
     +'<button class="btn ghost" data-cal="1">Next &rarr;</button>'
     +'<strong style="margin-left:6px;color:var(--navy);font-size:16px">'+esc(mLabel(m))+'</strong>'
     +'<span class="spacer"></span>'
+    +'<button class="btn ghost" id="calG">Refresh Google Calendar</button>'
     +'<button class="btn" id="calLive">Phone calendar (live)</button>'
     +'<button class="btn ghost" id="calHelp">Google Calendar</button>'
     +'<button class="btn ghost" data-print="1">PDF / print</button>'
@@ -3009,7 +3022,7 @@ function viewCal(){
         +cur.getDate()+'</div>';
       list.slice(0,4).forEach(function(e){
         var col=e.kind==="AMC"?"var(--navy)":(e.kind==="GMC"?"var(--teal)":
-          (e.kind==="CALL"?"var(--red)":(e.kind==="DONE"?"var(--green)":"#9AA5B5")));
+          (e.kind==="CALL"?"var(--red)":(e.kind==="DONE"?"var(--green)":(e.kind==="GCAL"?"#7B4FBF":"#9AA5B5"))));
         h+='<div style="font-size:10.5px;line-height:1.3;border-left:3px solid '+col+';padding:1px 4px;'
           +'margin-bottom:2px;background:#F7F9FC;border-radius:2px;overflow:hidden;text-overflow:ellipsis;'
           +'white-space:nowrap">'+esc(e.title)+'</div>';});
@@ -3021,7 +3034,8 @@ function viewCal(){
   h+='</tbody></table></div><div class="legend">'
     +'<span><i style="background:var(--navy)"></i>AMC due</span><span><i style="background:var(--teal)"></i>GMC due</span>'
     +'<span><i style="background:var(--green)"></i>Completed</span><span><i style="background:var(--red)"></i>On-call</span>'
-    +'<span><i style="background:#9AA5B5"></i>Duty</span>'
+    +'<span><i style="background:#9AA5B5"></i>Duty</span><span><i style="background:#7B4FBF"></i>Your Google Calendar'
+    +(GCAL.err?' (not loaded: '+esc(GCAL.err)+')':'')+'</span>'
     +'<span><i style="background:var(--wknd);border:1px solid var(--line)"></i>Weekend (Fri/Sat)</span>'
     +'<span><i style="background:var(--wkdy);border:1px solid var(--line)"></i>Working day</span>'
     +'<span>Press + on a day to book a service for that date.</span></div></div></div>';
@@ -4967,6 +4981,8 @@ function wire(){
       if(q2.trim())agentAct(q2.trim());return;}
     if(b.id==="chatMic"){dictate("chatIn",b);return;}
     if(b.id==="calLive"){liveCalModal();return;}
+    if(b.id==="calG"){var mm=calMonth||state.curMonth,pp=mm.split("-");
+      gcalEnsure(mm,mondayOf(new Date(+pp[0],+pp[1]-1,1)),new Date(+pp[0],+pp[1],0),true);return;}
     if(b.id==="chatClr"){CHAT=[];chatSave();render();return;}
     if(b.id==="readRep"){document.getElementById("agentIn").click();return;}
     if(b.dataset.delmonth){monthDeleteModal();return;}

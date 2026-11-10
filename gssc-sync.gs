@@ -28,7 +28,7 @@ var CLAUDE_MODEL = "claude-sonnet-5";
 
 /* Bump this whenever you paste in a new copy of the script. The app can read it
    back, so you can tell at a glance whether your deployment is up to date. */
-var SCRIPT_VERSION = "2026-11-10-cal-act";
+var SCRIPT_VERSION = "2026-11-10-gcal";
 
 var FILE_NAME = "gssc-tracker-data.json";
 
@@ -964,7 +964,42 @@ function techAct_(body) {
 }
 
 /* admin side — needs the secret KEY, same as the rest of the app */
+/* Run this once from the editor (Run button) to give the script permission to read your Google Calendar */
+function authCal_() { return CalendarApp.getDefaultCalendar().getName(); }
+
+/* events from the owner's own Google Calendar, so the app can show what was added there */
+function gcalEvents_(body) {
+  var f = String(body.from || ""), t = String(body.to || "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(f) || !/^\d{4}-\d{2}-\d{2}$/.test(t)) return json_({ ok: false, error: "bad dates" });
+  var a = f.split("-"), b = t.split("-");
+  var from = new Date(+a[0], +a[1] - 1, +a[2]), to = new Date(+b[0], +b[1] - 1, +b[2] + 1);
+  var out = [];
+  CalendarApp.getDefaultCalendar().getEvents(from, to).forEach(function (e) {
+    var allDay = e.isAllDayEvent();
+    var s = e.getStartTime(), en = e.getEndTime();
+    var last = allDay ? new Date(en.getTime() - 1) : s;
+    var d0 = Utilities.formatDate(s, "Asia/Riyadh", "yyyy-MM-dd");
+    var d1 = Utilities.formatDate(last, "Asia/Riyadh", "yyyy-MM-dd");
+    var days = [d0];
+    if (d1 > d0) {
+      var c = new Date(s.getTime());
+      for (var i = 0; i < 14; i++) {
+        c = new Date(c.getTime() + 864e5);
+        var ds = Utilities.formatDate(c, "Asia/Riyadh", "yyyy-MM-dd");
+        if (ds > d1) break;
+        days.push(ds);
+      }
+    }
+    var tm = allDay ? "" : Utilities.formatDate(s, "Asia/Riyadh", "HH:mm");
+    days.forEach(function (d) {
+      out.push({ id: e.getId() + d, date: d, time: tm, title: e.getTitle(), loc: e.getLocation() || "", desc: String(e.getDescription() || "").slice(0, 200) });
+    });
+  });
+  return json_({ ok: true, events: out });
+}
+
 function adminAct_(body) {
+  if (body.action === "a_gcal") return gcalEvents_(body);
   var h = techLoad_(), main = mainData_(), act = body.action;
   if (act === "a_events") {
     var cut = Date.now() - 45 * 864e5;
