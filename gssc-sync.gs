@@ -28,7 +28,7 @@ var CLAUDE_MODEL = "claude-sonnet-5";
 
 /* Bump this whenever you paste in a new copy of the script. The app can read it
    back, so you can tell at a glance whether your deployment is up to date. */
-var SCRIPT_VERSION = "2026-10-30-equip";
+var SCRIPT_VERSION = "2026-11-10-cal-act";
 
 var FILE_NAME = "gssc-tracker-data.json";
 
@@ -50,6 +50,12 @@ function json_(o) {
 /* the app reads the shared list */
 function doGet(e) {
   try {
+    if (e && e.parameter && e.parameter.ics) {
+      if (String(e.parameter.ics) !== icsToken_()) {
+        return ContentService.createTextOutput("wrong token");
+      }
+      return ContentService.createTextOutput(icsFeed_()).setMimeType(ContentService.MimeType.ICAL);
+    }
     if (String((e && e.parameter && e.parameter.key) || "") !== KEY) {
       return json_({ ok: false, error: "wrong key" });
     }
@@ -60,6 +66,63 @@ function doGet(e) {
   } catch (err) {
     return json_({ ok: false, error: String(err) });
   }
+}
+
+/* ---- live calendar feed: phones subscribe to this and show each site on its day ---- */
+function icsToken_() {
+  var pr = PropertiesService.getScriptProperties();
+  var t = pr.getProperty("ICS_TOKEN");
+  if (!t) {
+    t = Utilities.getUuid().replace(/-/g, "") + Utilities.getUuid().replace(/-/g, "").slice(0, 8);
+    pr.setProperty("ICS_TOKEN", t);
+  }
+  return t;
+}
+function icsEsc_(x) {
+  return String(x == null ? "" : x).replace(/\\/g, "\\\\").replace(/;/g, "\\;").replace(/,/g, "\\,").replace(/\r?\n/g, "\\n");
+}
+function icsDate_(iso) { return String(iso).replace(/-/g, ""); }
+function icsNext_(iso) {
+  var p = String(iso).split("-");
+  var d = new Date(Date.UTC(+p[0], +p[1] - 1, +p[2] + 1));
+  return d.getUTCFullYear() + ("0" + (d.getUTCMonth() + 1)).slice(-2) + ("0" + d.getUTCDate()).slice(-2);
+}
+function icsFeed_() {
+  var txt = getFile_().getBlob().getDataAsString() || "{}";
+  var o; try { o = JSON.parse(txt); } catch (err) { o = {}; }
+  var d = o.data || {};
+  var techs = {}; (d.techs || []).forEach(function (t) { techs[t.id] = t.name; });
+  var names = function (ids) { return (ids || []).map(function (i) { return techs[i] || ""; }).filter(Boolean).join(", "); };
+  var now = new Date();
+  var from = Utilities.formatDate(new Date(now.getTime() - 30 * 86400000), "Asia/Riyadh", "yyyy-MM-dd");
+  var stamp = Utilities.formatDate(now, "UTC", "yyyyMMdd'T'HHmmss'Z'");
+  var L = ["BEGIN:VCALENDAR", "VERSION:2.0", "PRODID:-//GSSC//Tracker//EN", "CALSCALE:GREGORIAN",
+    "METHOD:PUBLISH", "X-WR-CALNAME:GSSC Schedule", "X-WR-TIMEZONE:Asia/Riyadh",
+    "REFRESH-INTERVAL;VALUE=DURATION:PT1H", "X-PUBLISHED-TTL:PT1H"];
+  var ev = function (id, date, title, desc) {
+    if (!date || String(date) < from) return;
+    L.push("BEGIN:VEVENT", "UID:" + id + "@gssc-tracker", "DTSTAMP:" + stamp,
+      "DTSTART;VALUE=DATE:" + icsDate_(date), "DTEND;VALUE=DATE:" + icsNext_(date),
+      "SUMMARY:" + icsEsc_(title));
+    if (desc) L.push("DESCRIPTION:" + icsEsc_(desc));
+    L.push("END:VEVENT");
+  };
+  var dutyRef = {};
+  (d.duties || []).forEach(function (x) {
+    if (x.ref) dutyRef[x.ref] = 1;
+    var who = names(x.techIds);
+    ev("duty-" + x.id, x.date, (x.activity || "Duty") + " \u00b7 " + (x.siteText || "") + (who ? " (" + who + ")" : ""), x.remarks || "");
+  });
+  (d.amc || []).forEach(function (a) {
+    if (a.status === "Completed" || a.status === "Cancelled" || dutyRef["amc|" + a.id]) return;
+    ev("amc-" + a.id, a.schedDate, "AMC " + (a.amcNo || "") + " \u00b7 " + (a.site || "") + (a.serviceNo ? " (" + a.serviceNo + ")" : ""), names(a.techs));
+  });
+  (d.gmc || []).forEach(function (g) {
+    if (g.status === "Completed" || g.status === "Cancelled" || dutyRef["gmc|" + g.id]) return;
+    ev("gmc-" + g.id, g.schedDate, "GMC " + (g.gmcNo || "") + " \u00b7 " + (g.client || ""), names(g.techs) + " " + String(g.desc || "").slice(0, 120));
+  });
+  L.push("END:VCALENDAR");
+  return L.join("\r\n");
 }
 
 /* the app uploads a service report or a site photo */
@@ -133,6 +196,32 @@ function claudeAsk_(body) {
   var msg = "Here are my records:\n\n" + (body.context || "{}")
     + "\n\nMy question: " + (body.question || "");
   return json_(claudeCall_([{ role: "user", content: msg }], system, 1000));
+}
+
+/* the agent turns an instruction into a short list of changes; the app asks
+   the supervisor to confirm before anything is applied */
+function claudeAct_(body) {
+  var system = "You turn a maintenance supervisor's spoken instruction into changes in his tracker app. "
+    + "You are given his open jobs (with ids), technician names and today's date. "
+    + "Reply with ONLY a JSON object, no other text: {\"say\":\"one short sentence\",\"actions\":[...]}. "
+    + "Allowed actions: "
+    + "{\"type\":\"note\",\"text\":\"...\"} ; "
+    + "{\"type\":\"set_status\",\"kind\":\"amc|gmc\",\"id\":\"...\",\"status\":\"...\"} ; "
+    + "{\"type\":\"set_date\",\"kind\":\"amc|gmc\",\"id\":\"...\",\"date\":\"YYYY-MM-DD\"} ; "
+    + "{\"type\":\"set_progress\",\"id\":\"gmc id\",\"text\":\"...\"} ; "
+    + "{\"type\":\"assign_duty\",\"kind\":\"amc|gmc\",\"id\":\"...\",\"date\":\"YYYY-MM-DD\",\"techs\":[\"technician name\"]}. "
+    + "Use only ids and technician names that appear in the data. Never invent an id. "
+    + "If the instruction is unclear or matches no record, return an empty actions list and say what you need in \"say\". "
+    + "Resolve words like today, tomorrow, Sunday using the given today date (week starts Sunday in Saudi Arabia).";
+  var msg = "Data:\n" + (body.context || "{}") + "\n\nInstruction: " + (body.question || "");
+  var r = claudeCall_([{ role: "user", content: msg }], system, 1000);
+  if (!r.ok) return json_(r);
+  var t = String(r.text || "").replace(/^[\s\S]*?(\{)/, "$1").replace(/\}[^}]*$/, "}");
+  var out;
+  try { out = JSON.parse(t); } catch (err) {
+    return json_({ ok: false, error: "The agent's reply could not be understood. Try saying it again." });
+  }
+  return json_({ ok: true, say: out.say || "", actions: out.actions || [] });
 }
 
 /* the app sends a photo of a service report to be read */
@@ -1059,11 +1148,15 @@ function doPost(e) {
         ok: true,
         version: SCRIPT_VERSION,
         claudeKeySet: !!CLAUDE_KEY,
-        model: CLAUDE_MODEL
+        model: CLAUDE_MODEL,
+        icsToken: icsToken_()
       });
     }
     if (body.action === "ask") {
       return claudeAsk_(body);
+    }
+    if (body.action === "act") {
+      return claudeAct_(body);
     }
     if (body.action === "read") {
       return claudeRead_(body);

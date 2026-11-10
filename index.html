@@ -263,7 +263,7 @@
   </div>
   <div class="top-right"><button id="themeBtn" title="Change colours" style="background:none;border:1px solid currentColor;
     color:inherit;border-radius:3px;font-family:inherit;font-size:11px;padding:2px 7px;cursor:pointer;opacity:.8">Theme</button>
-    <span style="opacity:.75">v34</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
+    <span style="opacity:.75">v35</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
 </header>
 
 <nav class="tabs" role="tablist">
@@ -538,7 +538,7 @@ function agentContext(q){
       freq:c.freq,status:c.contractStatus};})};
   return JSON.stringify(ctx);}
 
-var WANT_SCRIPT="2026-10-30-equip";
+var WANT_SCRIPT="2026-11-10-cal-act";
 function scriptCheck(){
   if(!agentReady())return toast("Link this device first");
   toast("Checking the script\u2026");
@@ -601,6 +601,57 @@ function agentAsk(q){
     AGENTBUSY=false;
     CHAT.push(o.ok?{r:"ai",t:o.text||"(no answer)"}:{r:"err",t:o.error||"Something went wrong."});
     chatSave();render();});}
+
+/* ---------- "do it" mode: agent proposes changes, you confirm ---------- */
+function actContext(){
+  var tn=function(ids){return (ids||[]).map(function(i){var t=byId(state.techs,i);return t?t.name:"";}).filter(Boolean).join(", ");};
+  return JSON.stringify({today:iso(today()),
+    technicians:state.techs.filter(function(t){return t.active!==false;}).map(function(t){return t.name;}),
+    amc:amcOf(state.curMonth).filter(function(a){return !done(a.status);}).slice(0,120).map(function(a){
+      return {id:a.id,amcNo:a.amcNo,site:a.site,service:a.serviceNo,status:a.status,sched:a.schedDate,techs:tn(a.techs)};}),
+    gmc:state.gmc.filter(function(g){return outstanding(g.status);}).slice(0,120).map(function(g){
+      return {id:g.id,gmcNo:g.gmcNo,client:g.client,desc:String(g.desc||"").slice(0,60),status:g.status,sched:g.schedDate};})});}
+function actPlan(a){
+  /* returns {text,run} or null when the action is not valid */
+  var ISO=/^\d{4}-\d{2}-\d{2}$/,kind=a.kind==="amc"?"amc":(a.kind==="gmc"?"gmc":"");
+  var r=kind?byId(state[kind],a.id):null;
+  var lbl=function(x){return kind==="amc"?("AMC "+x.amcNo+" "+x.site):("GMC "+x.gmcNo);};
+  if(a.type==="note"&&a.text)return {text:"Save note: "+a.text,run:function(){
+    state.notes.push({id:uid(),text:String(a.text),kind:"note",done:false,created:iso(today())});}};
+  if(a.type==="set_status"&&r&&(kind==="amc"?AMC_STATUS:GMC_STATUS).indexOf(a.status)>-1)
+    return {text:lbl(r)+": status \u2192 "+a.status,run:function(){r.status=a.status;
+      if(done(a.status)&&!r.doneDate)r.doneDate=iso(today());}};
+  if(a.type==="set_date"&&r&&ISO.test(String(a.date)))
+    return {text:lbl(r)+": scheduled \u2192 "+fmt(a.date),run:function(){r.schedDate=a.date;}};
+  if(a.type==="set_progress"){var g=byId(state.gmc,a.id);
+    if(g&&a.text)return {text:"GMC "+g.gmcNo+": progress \u2192 "+a.text,run:function(){g.progress=String(a.text);}};}
+  if(a.type==="assign_duty"&&r&&ISO.test(String(a.date))&&a.techs&&a.techs.length){
+    var ids=[],bad=false;
+    a.techs.forEach(function(n){var q=String(n).toLowerCase(),f=state.techs.filter(function(t){
+      return t.name.toLowerCase()===q||t.name.toLowerCase().indexOf(q)===0;});
+      if(f.length===1)ids.push(f[0].id);else bad=true;});
+    if(bad||!ids.length)return null;
+    var names=ids.map(function(i){return byId(state.techs,i).name;}).join(", ");
+    return {text:"Duty "+fmt(a.date)+": "+lbl(r)+" \u2192 "+names,run:function(){
+      state.duties.push({id:uid(),date:a.date,ref:kind+"|"+r.id,
+        siteText:kind==="amc"?(r.amcNo+" \u00b7 "+r.site):String(r.gmcNo),
+        activity:kind==="amc"?"AMC":"GMC",location:r.location||"",techIds:ids,remarks:""});
+      r.techs=ids;if(!r.schedDate)r.schedDate=a.date;}};}
+  return null;}
+function agentAct(q){
+  if(AGENTBUSY)return;
+  CHAT.push({r:"me",t:"Do: "+q});chatSave();AGENTBUSY=true;render();
+  agentPost({action:"act",question:q,context:actContext()},function(o){
+    AGENTBUSY=false;
+    if(!o.ok){CHAT.push({r:"err",t:o.error&&/unknown action/i.test(o.error)?"The script is old. Paste the new gssc-sync.gs and deploy a New version.":(o.error||"Something went wrong.")});chatSave();render();return;}
+    var plans=(o.actions||[]).map(actPlan).filter(Boolean);
+    CHAT.push({r:"ai",t:(o.say||"")+(plans.length?"":" (no changes made)")});chatSave();render();
+    if(!plans.length)return;
+    openModal("Confirm changes",'<p class="hint">'+esc(o.say||"")+'</p>'
+      +'<ul style="padding-left:18px;line-height:1.7">'+plans.map(function(x){return '<li>'+esc(x.text)+'</li>';}).join("")+'</ul>',
+      function(){plans.forEach(function(x){x.run();});closeModal();
+        CHAT.push({r:"ai",t:"Done: "+plans.length+" change(s) applied."});chatSave();commit("Agent changes applied");});
+    var sv=document.getElementById("mSave");if(sv)sv.textContent="Apply";});}
 
 /* ---------- reading a photographed report ---------- */
 var LASTREAD=null;
@@ -705,6 +756,8 @@ function viewAgent(){
     +'<input type="text" id="chatIn" placeholder="Ask about a site, a month, a technician\u2026" '
     +'style="flex:1;min-width:180px"'+(AGENTBUSY?" disabled":"")+'>'
     +'<button class="btn" id="chatGo"'+(AGENTBUSY?" disabled":"")+'>Ask</button>'
+    +'<button class="btn" id="chatDo" style="background:var(--teal)"'+(AGENTBUSY?" disabled":"")+'>Do it</button>'
+    +'<button class="btn ghost" id="chatMic" type="button">\ud83c\udf99 Speak</button>'
     +'<button class="btn ghost" id="readRep"'+(AGENTBUSY?" disabled":"")+'>Read a report</button>'
     +(CHAT.length?'<button class="btn ghost" id="chatClr">Clear</button>':"")+'</div>'
     +'<p class="hint">Answers come only from the records on this device \u2014 it does not search the internet. '
@@ -2071,7 +2124,7 @@ function notesCard(only){
   return '<div class="card"><h2>'+(only?"Told to the agent":"Things to remember")+' <span class="count">'+L.length+'</span></h2><div class="body">'
     +L.map(function(n){return '<div class="nrow"><div class="nt">'+(n.kind==="agent"?'<span class="tag">agent</span>':'')+esc(n.text)
       +'<span class="sub">'+esc(n.created||"")+'</span></div>'
-      +(n.kind==="agent"&&agentReady()?'<button class="btn ghost" data-note="ask|'+n.id+'">Ask now</button>':'')
+      +(n.kind==="agent"&&agentReady()?'<button class="btn ghost" data-note="do|'+n.id+'">Do it</button><button class="btn ghost" data-note="ask|'+n.id+'">Ask</button>':'')
       +'<button class="btn ghost" data-note="done|'+n.id+'">Done</button>'
       +'<button class="btn ghost" data-note="del|'+n.id+'">Delete</button></div>';}).join("")
     +'</div></div>';}
@@ -2116,7 +2169,8 @@ function fabInit(){
     var p=b.dataset.note.split("|"),n=byId(state.notes,p[1]);if(!n)return;
     if(p[0]==="done"){n.done=true;commit("Note done");}
     else if(p[0]==="del"){state.notes=state.notes.filter(function(x){return x.id!==n.id;});commit("Note deleted");}
-    else if(p[0]==="ask"){tab="agent";render();agentAsk(n.text);}});}
+    else if(p[0]==="ask"){tab="agent";render();agentAsk(n.text);}
+    else if(p[0]==="do"){tab="agent";render();agentAct(n.text);}});}
 function maxGmc(){
   var mx=0;state.gmc.forEach(function(g){var m=String(g.gmcNo).match(/(\d+)/);if(m&&+m[1]>mx)mx=+m[1];});
   return mx?"P"+mx:"\u2014";}
@@ -2872,6 +2926,25 @@ function downloadIcs(){
   setTimeout(function(){URL.revokeObjectURL(a.href);},4000);
   toast(list.length+" job(s) saved as a calendar file");}
 
+function liveCalModal(){
+  if(!agentReady())return toast("Link this device first (Data & team)");
+  toast("Getting your calendar link\u2026");
+  agentPost({action:"ping"},function(o){
+    if(!o.ok||!o.icsToken){
+      return openModal("Update the script first",'<p>The script on Google is the old copy, so it cannot make the calendar link yet.</p>'
+        +'<ol style="padding-left:18px;line-height:1.7"><li>Open your Apps Script, replace all code with the new <b>gssc-sync.gs</b>, Save.</li>'
+        +'<li>Deploy \u203a Manage deployments \u203a pencil \u203a Version: <b>New version</b> \u203a Deploy.</li><li>Come back and press this button again.</li></ol>',null,"",false);}
+    var url=SYNC.url+(SYNC.url.indexOf("?")>-1?"&":"?")+"ics="+o.icsToken;
+    openModal("Schedule in your phone calendar",
+      '<p class="hint">Every scheduled site and duty shows on its day and updates by itself. Anyone with this link can see the schedule, so do not share it.</p>'
+      +'<div class="field"><label>Calendar link</label><input id="icsUrl" readonly value="'+esc(url)+'" onclick="this.select()"></div>'
+      +'<div class="info"><b>Android (Google Calendar)</b><br>On a computer open <b>calendar.google.com</b> \u203a Other calendars \u203a + \u203a <b>From URL</b> \u203a paste the link \u203a Add. It then appears in the Google Calendar app on your phone. If the phone hides it: Calendar app \u203a Settings \u203a tick the new calendar.</div>'
+      +'<div class="info"><b>iPhone</b><br>Settings \u203a Calendar \u203a Accounts \u203a Add Account \u203a Other \u203a <b>Add Subscribed Calendar</b> \u203a paste the link.</div>'
+      +'<div class="info"><b>Home screen</b><br>Long-press the home screen \u203a Widgets \u203a Calendar (Agenda / Schedule view) to see today\u2019s sites at a glance.</div>'
+      +'<p class="hint">Google refreshes subscribed calendars every few hours, so a change can take a while to show.</p>',
+      null,'<button class="btn" id="icsCopy">Copy link</button>',true);
+    var c=document.getElementById("icsCopy");if(c)c.onclick=function(){copyText(url,"Link copied");};});}
+
 function calendarHowTo(){
   openModal("Put the schedule in Google Calendar",
     '<p class="hint">Two ways, both take a minute.</p>'
@@ -2908,6 +2981,7 @@ function viewCal(){
     +'<button class="btn ghost" data-cal="1">Next &rarr;</button>'
     +'<strong style="margin-left:6px;color:var(--navy);font-size:16px">'+esc(mLabel(m))+'</strong>'
     +'<span class="spacer"></span>'
+    +'<button class="btn" id="calLive">Phone calendar (live)</button>'
     +'<button class="btn ghost" id="calHelp">Google Calendar</button>'
     +'<button class="btn ghost" data-print="1">PDF / print</button>'
     +'<button class="btn" data-add="book">Book a service</button></div>';
@@ -4884,6 +4958,11 @@ function wire(){
     if(b.id==="chatGo"){
       var q=(document.getElementById("chatIn")||{}).value||"";
       if(q.trim())agentAsk(q.trim());return;}
+    if(b.id==="chatDo"){
+      var q2=(document.getElementById("chatIn")||{}).value||"";
+      if(q2.trim())agentAct(q2.trim());return;}
+    if(b.id==="chatMic"){dictate("chatIn",b);return;}
+    if(b.id==="calLive"){liveCalModal();return;}
     if(b.id==="chatClr"){CHAT=[];chatSave();render();return;}
     if(b.id==="readRep"){document.getElementById("agentIn").click();return;}
     if(b.dataset.delmonth){monthDeleteModal();return;}
