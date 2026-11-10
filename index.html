@@ -172,7 +172,19 @@
   .cbtn em{font-style:normal;font-size:11.5px;color:var(--muted);display:block}
   .cbtn .bar{display:flex;height:5px;border-radius:3px;overflow:hidden;margin-top:7px;background:var(--line-soft)}
   .cbtn .bar i{display:block;height:100%;background:var(--green)}
-  .board-wrap{overflow-x:auto}
+  .board-wrap{overflow:auto;max-height:calc(100vh - var(--stick,52px) - 24px)}
+  .board-wrap thead th{position:sticky;top:0;z-index:4}
+  .board-wrap thead th.rowh{left:0;z-index:6}
+  #gmcTbl td:nth-child(2){min-width:120px;max-width:170px}
+  #gmcTbl td:nth-child(3){min-width:210px}
+  tr.mrow td{background:var(--thbg);color:var(--navy);font-weight:700;font-size:13px;padding:7px 10px;border-bottom:1px solid var(--line)}
+  main{padding-bottom:130px}
+  .fabs{position:fixed;right:14px;bottom:16px;z-index:60;display:flex;flex-direction:column;gap:9px;align-items:flex-end}
+  .fabs button{border:0;border-radius:26px;padding:12px 16px;font-size:14px;font-weight:700;color:#fff;background:var(--navy);box-shadow:0 3px 10px rgba(0,0,0,.3);cursor:pointer}
+  .fabs button.ag{background:var(--teal)}
+  .nrow{display:flex;gap:8px;align-items:flex-start;padding:8px 0;border-bottom:1px solid var(--line-soft)}
+  .nrow .nt{flex:1}
+  .nrow .tag{font-size:10.5px;background:var(--teal);color:#fff;border-radius:8px;padding:1px 6px;margin-right:6px}
   table.board{border-collapse:separate;border-spacing:0;min-width:940px}
   table.board th.rowh,table.board td.rowc{position:sticky;left:0;background:var(--thbg);z-index:2;border-right:1px solid var(--line);min-width:158px}
   table.board td.rowc{font-weight:600;color:var(--navy);font-size:13px}
@@ -251,7 +263,7 @@
   </div>
   <div class="top-right"><button id="themeBtn" title="Change colours" style="background:none;border:1px solid currentColor;
     color:inherit;border-radius:3px;font-family:inherit;font-size:11px;padding:2px 7px;cursor:pointer;opacity:.8">Theme</button>
-    <span style="opacity:.75">v33</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
+    <span style="opacity:.75">v34</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
 </header>
 
 <nav class="tabs" role="tablist">
@@ -414,7 +426,7 @@ function nextServ(s){
   return n+suf+" Serv";}
 
 /* ================= device sync ================= */
-var COLL=["contracts","amc","gmc","oncall","duties","techs","files","equip"];
+var COLL=["contracts","amc","gmc","oncall","duties","techs","files","equip","notes"];
 var SNAP={},SYNC={url:"",key:"",last:0,busy:false,timer:null,err:""};
 function syncCfgLoad(){
   try{var c=JSON.parse(localStorage.getItem("gssc-sync-cfg")||"{}");
@@ -673,7 +685,7 @@ function readConfirmModal(f){
   },"",false,null,null);}
 
 function viewAgent(){
-  var h='<div class="card"><h2>Agent <span class="count">'+(agentReady()?"ready":"not linked")+'</span></h2><div class="body">';
+  var h=notesCard('agent')+'<div class="card"><h2>Agent <span class="count">'+(agentReady()?"ready":"not linked")+'</span></h2><div class="body">';
   if(!agentReady()){
     h+='<div class="empty"><b>Link this device first</b>'
       +'The agent works through your own Google Apps Script, so the Claude key never sits in this page. '
@@ -1478,6 +1490,7 @@ function load(){
     if(!state.files)state.files=[];
     if(!state.log)state.log=[];
     if(!state.equip)state.equip=[];
+    if(!state.notes)state.notes=[];
     chatLoad();
     boot();
   }).catch(function(){state=JSON.parse(JSON.stringify(SEED));boot();});
@@ -1541,7 +1554,7 @@ function stickHeight(){
   }catch(e){}}
 
 function render(){
-  var _keep=viewKeep();
+  var _keep=viewKeep();fabInit();
   document.getElementById("todayLabel").textContent=fmt(iso(today()));
   Array.prototype.forEach.call(document.querySelectorAll("nav.tabs button"),function(b){
     b.setAttribute("aria-selected",b.dataset.tab===tab?"true":"false");});
@@ -1645,7 +1658,7 @@ function viewDash(){
   var unsched=all.filter(function(x){return !x.schedDate&&!done(x.status)&&x.status!=="On Hold";});
   var openCalls=C.filter(function(c){return c.status!=="Closed";});
 
-  var h='<div class="stats">'
+  var h=notesCard()+'<div class="stats">'
     +stat("navy","AMC services",aDone+" / "+A.length,mLabel(m)+" completed")
     +stat("navy","GMC jobs",gDone+" / "+G.length,"completed")
     +stat("red","Overdue",overdue.length,"scheduled date passed")
@@ -1880,7 +1893,7 @@ function clientCard(c){
 /* ================= AMC ================= */
 
 /* ---------- which slice of the month is on screen ---------- */
-var amcView="all",gmcView="all";
+var amcView="all",gmcView="open";
 function amcViewTitle(){
   return amcView==="left"?"AMC still to do":(amcView==="done"?"AMC completed":"AMC service schedule");}
 function amcViewBar(total,doneN,leftN){
@@ -2022,7 +2035,8 @@ function viewGmc(){
     +'<button class="btn ghost" data-export="gmc">Export Excel</button>'
     +'<button class="btn ghost" data-print="1">PDF / print</button>'
     +'<button class="btn" data-add="gmc">Log job</button></div>';
-  var rows=allG.sort(function(a,b){return a.gmcNo<b.gmcNo?1:-1;});
+  var rows=allG.sort(function(a,b){var am=a.month||"",bm=b.month||"";
+    if(am!==bm)return am<bm?1:-1;return a.gmcNo<b.gmcNo?1:-1;});
   if(gmcView==="open")rows=rows.filter(function(g){return outstanding(g.status);});
   if(gmcView==="done")rows=rows.filter(function(g){return done(g.status);});
   var d=dAll;
@@ -2031,14 +2045,16 @@ function viewGmc(){
     +'<span class="count" id="gmcTblCount">'+rows.length+' shown</span>'
     +'<span class="count">newest number: '+esc(maxGmc())+'</span></h2>'
     +'<div class="body flush"><div class="tbl-wrap"><table id="gmcTbl" class="rsp"><thead><tr>'
-    +'<th>GMC no</th><th>Client</th><th>Job description</th><th>Month</th><th>Scheduled</th><th>Status</th>'
+    +'<th>GMC no</th><th>Client</th><th>Job description</th><th>Scheduled</th><th>Status</th>'
     +'<th>Report</th><th>QTN</th><th>JCC no</th><th>JCC date</th><th>Done by</th><th>Progress remark</th><th></th></tr></thead><tbody>';
+  var lastM=null;
   rows.forEach(function(g){
+    if((g.month||"")!==lastM){lastM=g.month||"";
+      h+='<tr class="mrow"><td colspan="12">'+esc(lastM?mLabel(lastM):"No month")+'</td></tr>';}
     h+='<tr data-row="'+esc((g.gmcNo+" "+g.clientRaw+" "+g.desc+" "+g.jccNo).toLowerCase())+'" data-stat="'+esc(g.status)+'" data-month="'+esc(g.month||"")+'" data-loc="'+esc(g.location||"")+'">'
       +'<td class="num site-name" data-l="GMC no">'+esc(g.gmcNo)+'</td><td data-l="Client">'+esc(g.clientRaw)+'</td>'
       +'<td data-l="Job">'+esc(g.desc)+(g.remarks?'<span class="sub">'+esc(g.remarks)+'</span>':'')
         +qtnSummary(g)+'</td>'
-      +'<td class="num" data-l="Month">'+esc(mLabel(g.month))+'</td>'
       +'<td data-l="Scheduled">'+dateInp("gmc",g)+'</td><td data-l="Status">'+statusSel("gmc",g)+'</td>'
       +'<td data-l="Report">'+reportSel("gmc",g)+'</td><td data-l="QTN">'+qtnSel("gmc",g)+'</td>'
       +'<td class="num" data-l="JCC no">'+esc(g.jccNo||"\u2014")+'</td><td class="num" data-l="JCC date">'+fmt(g.jccDate)+'</td>'
@@ -2048,6 +2064,59 @@ function viewGmc(){
       +'<button class="link" data-up="gmc|'+g.id+'">Report</button></td></tr>';});
   return h+'</tbody></table></div></div></div>';
 }
+/* ---------- quick notes + shortcut buttons ---------- */
+function notesCard(only){
+  var L=(state.notes||[]).filter(function(n){return !n.done&&(!only||n.kind===only);});
+  if(!L.length)return "";
+  return '<div class="card"><h2>'+(only?"Told to the agent":"Things to remember")+' <span class="count">'+L.length+'</span></h2><div class="body">'
+    +L.map(function(n){return '<div class="nrow"><div class="nt">'+(n.kind==="agent"?'<span class="tag">agent</span>':'')+esc(n.text)
+      +'<span class="sub">'+esc(n.created||"")+'</span></div>'
+      +(n.kind==="agent"&&agentReady()?'<button class="btn ghost" data-note="ask|'+n.id+'">Ask now</button>':'')
+      +'<button class="btn ghost" data-note="done|'+n.id+'">Done</button>'
+      +'<button class="btn ghost" data-note="del|'+n.id+'">Delete</button></div>';}).join("")
+    +'</div></div>';}
+var REC=null;
+function dictate(inputId,btn){
+  var SR=window.SpeechRecognition||window.webkitSpeechRecognition;
+  var el=document.getElementById(inputId);
+  if(!SR||!el){toast("Dictation not supported here \u2014 use the microphone key on your phone keyboard");if(el)el.focus();return;}
+  if(REC){try{REC.stop();}catch(e){}REC=null;if(btn)btn.textContent="\ud83c\udf99 Speak";return;}
+  var r=new SR();REC=r;r.lang="en-US";r.interimResults=false;r.continuous=true;
+  r.onresult=function(e){var t="";for(var i=e.resultIndex;i<e.results.length;i++)t+=e.results[i][0].transcript+" ";
+    el.value=(el.value?el.value+" ":"")+t.trim();};
+  r.onend=function(){REC=null;if(btn)btn.textContent="\ud83c\udf99 Speak";};
+  r.onerror=function(){REC=null;if(btn)btn.textContent="\ud83c\udf99 Speak";};
+  if(btn)btn.textContent="\u23f9 Stop";
+  try{r.start();}catch(e){}}
+function noteModal(kind){
+  var body='<div class="field"><label>What do you need to remember or tell the agent?</label>'
+    +'<textarea id="nText" rows="4" placeholder="e.g. call Kanoo Tower about FACP fault; arrange batteries for P80091"></textarea></div>'
+    +'<div class="field"><button class="btn ghost" id="nMic" type="button">\ud83c\udf99 Speak</button></div>'
+    +'<div class="field"><label>Type</label><select id="nKind"><option value="note"'+(kind!=="agent"?" selected":"")+'>Remember (note)</option>'
+    +'<option value="agent"'+(kind==="agent"?" selected":"")+'>Tell the agent</option></select></div>';
+  openModal("Quick note",body,function(){
+    var t=val("nText");if(!t)return mErr("Write or speak the note.");
+    if(REC){try{REC.stop();}catch(e){}}
+    state.notes.push({id:uid(),text:t,kind:val("nKind"),done:false,created:iso(today())+" "+new Date().toTimeString().slice(0,5)});
+    closeModal();commit("Note saved");});
+  var mic=document.getElementById("nMic");if(mic)mic.onclick=function(){dictate("nText",mic);};
+  var ta=document.getElementById("nText");if(ta)ta.focus();}
+function agentShortcut(){
+  tab="agent";render();window.scrollTo(0,0);
+  var i=document.getElementById("chatIn");if(i)i.focus();}
+function fabInit(){
+  if(document.getElementById("fabs"))return;
+  var d=document.createElement("div");d.id="fabs";d.className="fabs";
+  d.innerHTML='<button id="fabNote">\ud83d\udcdd Note</button><button id="fabAgent" class="ag">\ud83e\udd16 Agent</button>';
+  document.body.appendChild(d);
+  document.getElementById("fabNote").onclick=function(){noteModal();};
+  document.getElementById("fabAgent").onclick=agentShortcut;
+  document.addEventListener("click",function(e){
+    var b=e.target.closest&&e.target.closest("[data-note]");if(!b)return;
+    var p=b.dataset.note.split("|"),n=byId(state.notes,p[1]);if(!n)return;
+    if(p[0]==="done"){n.done=true;commit("Note done");}
+    else if(p[0]==="del"){state.notes=state.notes.filter(function(x){return x.id!==n.id;});commit("Note deleted");}
+    else if(p[0]==="ask"){tab="agent";render();agentAsk(n.text);}});}
 function maxGmc(){
   var mx=0;state.gmc.forEach(function(g){var m=String(g.gmcNo).match(/(\d+)/);if(m&&+m[1]>mx)mx=+m[1];});
   return mx?"P"+mx:"\u2014";}
@@ -4089,14 +4158,22 @@ function callModal(o){
 function dutyModal(duty,pd,pt){
   var d=duty||{id:"",date:pd||iso(today()),ref:"",siteText:"",activity:"AMC",location:"",
     techIds:pt?[pt]:[],remarks:""};
-  var jobs=amcOf(state.curMonth).map(function(a){return {v:"amc|"+a.id,t:"AMC "+a.amcNo+" \u00b7 "+a.site+" ("+a.serviceNo+")"};})
-    .concat(state.gmc.map(function(g){return {v:"gmc|"+g.id,t:"GMC "+g.gmcNo+" \u00b7 "+g.client+" \u2014 "+String(g.desc).slice(0,40)};}))
-    .concat(state.oncall.map(function(o){return {v:"call|"+o.id,t:"CALL "+o.client+" \u2014 "+String(o.issue).slice(0,40)};}));
+  var keepRef=d.ref||"";
+  var jobs=amcOf(state.curMonth).filter(function(a){return !done(a.status)||("amc|"+a.id)===keepRef;})
+    .map(function(a){return {g:"AMC",v:"amc|"+a.id,t:a.amcNo+" \u00b7 "+a.site+" ("+a.serviceNo+")"};})
+    .concat(state.gmc.filter(function(g){return !done(g.status)||("gmc|"+g.id)===keepRef;})
+      .sort(function(a,b){return a.gmcNo<b.gmcNo?1:-1;})
+      .map(function(g){return {g:"GMC",v:"gmc|"+g.id,t:String(g.gmcNo)};}))
+    .concat(state.oncall.filter(function(o){return o.status!=="Closed"||("call|"+o.id)===keepRef;})
+      .map(function(o){return {g:"On-call",v:"call|"+o.id,t:o.client+" \u2014 "+String(o.issue).slice(0,40)};}));
+  var jobOpts=["AMC","GMC","On-call"].map(function(gr){
+    var L=jobs.filter(function(j){return j.g===gr;});if(!L.length)return "";
+    return '<optgroup label="'+gr+'">'+L.map(function(j){return '<option value="'+esc(j.v)+'"'+(j.v===d.ref?" selected":"")+'>'+esc(j.t)+'</option>';}).join("")+'</optgroup>';}).join("");
   var body='<div class="grid2">'
     +'<div class="field"><label>Date</label><input type="date" id="fDate" value="'+esc(d.date)+'"></div>'
     +'<div class="field"><label>Activity</label><select id="fAct">'+opts(ACTIVITIES,d.activity)+'</select></div></div>'
     +'<div class="field"><label>Pick the job</label><select id="fRef"><option value="">\u2014 not from list \u2014</option>'
-      +jobs.map(function(j){return '<option value="'+esc(j.v)+'"'+(j.v===d.ref?" selected":"")+'>'+esc(j.t)+'</option>';}).join("")+'</select></div>'
+      +jobOpts+'</select></div>'
     +'<div class="field"><label>Site / job (as shown on the board)</label><input id="fSite" value="'+esc(d.siteText)+'"></div>'
     +'<div class="field"><label>Location</label><select id="fLoc">'+opts([""].concat(LOCATIONS),d.location)+'</select></div>'
     +'<div class="field"><label>Technicians on this site <span id="cnt" class="sub" style="display:inline"></span></label>'+checksHtml("fTechs",d.techIds)+'</div>'
@@ -4123,7 +4200,7 @@ function dutyModal(duty,pd,pt){
     var r=p[0]==="amc"?byId(state.amc,p[1]):(p[0]==="gmc"?byId(state.gmc,p[1]):byId(state.oncall,p[1]));
     if(!r)return;
     document.getElementById("fSite").value=p[0]==="amc"?(r.amcNo+" \u00b7 "+r.site)
-      :(p[0]==="gmc"?(r.gmcNo+" \u00b7 "+r.client):(r.client+" \u00b7 on-call"));
+      :(p[0]==="gmc"?String(r.gmcNo):(r.client+" \u00b7 on-call"));
     document.getElementById("fLoc").value=r.location||"";
     document.getElementById("fAct").value=p[0]==="amc"?"AMC":(p[0]==="gmc"?"GMC":"On-Call");};
 }
@@ -4829,12 +4906,16 @@ function filt(tbl,qi,si,mi,li){
   var mm=mi?(document.getElementById(mi)||{value:""}).value:"";
   var lo=li?(document.getElementById(li)||{value:""}).value:"";
   var shown=0;
+  var hdr=null,hdrOn=false;
+  var flushH=function(){if(hdr)hdr.style.display=hdrOn?"":"none";};
   Array.prototype.forEach.call(document.querySelectorAll("#"+tbl+" tbody tr"),function(tr){
+    if(tr.classList.contains("mrow")){flushH();hdr=tr;hdrOn=false;return;}
     if(!tr.dataset.row)return;
     var on=tr.dataset.row.indexOf(q)>-1&&(!s||tr.dataset.stat===s)
       &&(!mm||tr.dataset.month===mm)&&(!lo||tr.dataset.loc===lo);
     tr.style.display=on?"":"none";
-    if(on)shown++;});
+    if(on){shown++;hdrOn=true;}});
+  flushH();
   var c=document.getElementById(tbl+"Count");
   if(c)c.textContent=shown+" shown";
 }
