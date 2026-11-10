@@ -263,7 +263,7 @@
   </div>
   <div class="top-right"><button id="themeBtn" title="Change colours" style="background:none;border:1px solid currentColor;
     color:inherit;border-radius:3px;font-family:inherit;font-size:11px;padding:2px 7px;cursor:pointer;opacity:.8">Theme</button>
-    <span style="opacity:.75">v37</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
+    <span style="opacity:.75">v38</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
 </header>
 
 <nav class="tabs" role="tablist">
@@ -634,7 +634,7 @@ function actPlan(a){
     var names=ids.map(function(i){return byId(state.techs,i).name;}).join(", ");
     return {text:"Duty "+fmt(a.date)+": "+lbl(r)+" \u2192 "+names,run:function(){
       state.duties.push({id:uid(),date:a.date,ref:kind+"|"+r.id,
-        siteText:kind==="amc"?(r.amcNo+" \u00b7 "+r.site):String(r.gmcNo),
+        siteText:kind==="amc"?(r.amcNo+" \u00b7 "+r.site):(r.gmcNo+" \u00b7 "+(r.clientRaw||r.client||"")),
         activity:kind==="amc"?"AMC":"GMC",location:r.location||"",techIds:ids,remarks:""});
       r.techs=ids;if(!r.schedDate)r.schedDate=a.date;}};}
   return null;}
@@ -4255,7 +4255,7 @@ function dutyModal(duty,pd,pt){
     .map(function(a){return {g:"AMC",v:"amc|"+a.id,t:a.amcNo+" \u00b7 "+a.site+" ("+a.serviceNo+")"};})
     .concat(state.gmc.filter(function(g){return !done(g.status)||("gmc|"+g.id)===keepRef;})
       .sort(function(a,b){return a.gmcNo<b.gmcNo?1:-1;})
-      .map(function(g){return {g:"GMC",v:"gmc|"+g.id,t:String(g.gmcNo)};}))
+      .map(function(g){return {g:"GMC",v:"gmc|"+g.id,t:String(g.gmcNo)+" \u00b7 "+String(g.clientRaw||g.client||"")};}))
     .concat(state.oncall.filter(function(o){return o.status!=="Closed"||("call|"+o.id)===keepRef;})
       .map(function(o){return {g:"On-call",v:"call|"+o.id,t:o.client+" \u2014 "+String(o.issue).slice(0,40)};}));
   var jobOpts=["AMC","GMC","On-call"].map(function(gr){
@@ -4292,7 +4292,7 @@ function dutyModal(duty,pd,pt){
     var r=p[0]==="amc"?byId(state.amc,p[1]):(p[0]==="gmc"?byId(state.gmc,p[1]):byId(state.oncall,p[1]));
     if(!r)return;
     document.getElementById("fSite").value=p[0]==="amc"?(r.amcNo+" \u00b7 "+r.site)
-      :(p[0]==="gmc"?String(r.gmcNo):(r.client+" \u00b7 on-call"));
+      :(p[0]==="gmc"?(r.gmcNo+" \u00b7 "+(r.clientRaw||r.client||"")):(r.client+" \u00b7 on-call"));
     document.getElementById("fLoc").value=r.location||"";
     document.getElementById("fAct").value=p[0]==="amc"?"AMC":(p[0]==="gmc"?"GMC":"On-Call");};
 }
