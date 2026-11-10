@@ -263,7 +263,7 @@
   </div>
   <div class="top-right"><button id="themeBtn" title="Change colours" style="background:none;border:1px solid currentColor;
     color:inherit;border-radius:3px;font-family:inherit;font-size:11px;padding:2px 7px;cursor:pointer;opacity:.8">Theme</button>
-    <span style="opacity:.75">v35</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
+    <span style="opacity:.75">v36</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
 </header>
 
 <nav class="tabs" role="tablist">
@@ -1553,6 +1553,10 @@ function boot(){
   weekStart=mondayOf(new Date());
   state.tomb=state.tomb||{};
   snapshot();render();
+  try{var go=new URLSearchParams(location.search).get("go");
+    if(go==="agent"||go==="note")setTimeout(function(){
+      if(go==="note"){noteModal();var mc=document.getElementById("nMic");if(mc)try{dictate("nText",mc);}catch(e){}}
+      else{agentShortcut();var cm=document.getElementById("chatMic");if(cm)try{dictate("chatIn",cm);}catch(e){}}},400);}catch(e){}
   lockCheck();
   document.addEventListener("visibilitychange",function(){
     if(document.hidden)lockArm();else lockMaybe();});
