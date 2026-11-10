@@ -965,7 +965,7 @@ function techAct_(body) {
 
 /* admin side — needs the secret KEY, same as the rest of the app */
 /* Run this once from the editor (Run button) to give the script permission to read your Google Calendar */
-function authCal_() { return CalendarApp.getDefaultCalendar().getName(); }
+function authCal() { return CalendarApp.getDefaultCalendar().getName(); }
 
 /* events from the owner's own Google Calendar, so the app can show what was added there */
 function gcalEvents_(body) {
