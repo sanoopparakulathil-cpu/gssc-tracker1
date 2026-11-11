@@ -28,7 +28,7 @@ var CLAUDE_MODEL = "claude-sonnet-5";
 
 /* Bump this whenever you paste in a new copy of the script. The app can read it
    back, so you can tell at a glance whether your deployment is up to date. */
-var SCRIPT_VERSION = "2026-11-10-gcal";
+var SCRIPT_VERSION = "2026-11-11-scope";
 
 var FILE_NAME = "gssc-tracker-data.json";
 
@@ -922,7 +922,8 @@ function techAct_(body) {
     var jc = String(ev.jcc || "").trim().slice(0, 40);
     var remaining = String(ev.remaining || "").trim().slice(0, 600);
     if (result === "complete") {
-      if (!jc) return json_({ ok: false, error: "JCC number is compulsory." });
+      if (ev.rowKind === "gmc" && !jc) return json_({ ok: false, error: "JCC number is compulsory to complete a GMC job." });
+      if (ev.rowKind === "amc" && !String(ev.sr || "").trim()) return json_({ ok: false, error: "Service report (SR) number is compulsory to complete an AMC service." });
       if (items.length && !(ev.items && ev.items.total === items.length && ev.items.done === items.length)) {
         return json_({ ok: false, error: "Tick every scope item. Nothing was marked completed." });
       }
@@ -1006,6 +1007,21 @@ function adminAct_(body) {
     var evs = h.d.events.filter(function (e) { return e.ts >= cut; });
     return json_({ ok: true, version: SCRIPT_VERSION, now: Date.now(), events: evs, tools: toolState_(h.d),
       pins: (main.techs || []).map(function (t) { return { id: t.id, name: t.name, active: t.active !== false, pinSet: !!h.d.pins[t.id] }; }) });
+  }
+  if (act === "a_sd_save") {
+    var sdSite = cleanStr_(body.site, 120).trim();
+    if (!sdSite) return json_({ ok: false, error: "Choose the site." });
+    var sdData = {}, sdN = 0, sdKeys = Object.keys(body.data || {});
+    if (sdKeys.length > 900) return json_({ ok: false, error: "Too much data." });
+    sdKeys.forEach(function (k) {
+      if (!/^[a-z0-9]{2,30}$/.test(k)) return;
+      var v = cleanStr_(body.data[k], 200);
+      if (v !== "") { sdData[k] = v; sdN++; }
+    });
+    var sdPrev = h.d.sd[sdSite];
+    h.d.sd[sdSite] = { data: sdData, by: "Supervisor", byId: "admin", mod: Date.now(), n: sdN, first: sdPrev ? sdPrev.first : "Supervisor" };
+    techSave_(h);
+    return json_({ ok: true });
   }
   if (act === "a_sd_list") {
     var sl = h.d.sd, out = Object.keys(sl).map(function (k) { return { site: k, by: sl[k].by, mod: sl[k].mod, n: sl[k].n || 0 }; });

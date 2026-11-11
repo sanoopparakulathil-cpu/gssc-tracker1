@@ -184,11 +184,9 @@ function draw(force){
   var h='<header><h1>'+esc(S.tech)+'<small>'+esc(S.today)+(online?'':' · offline')+(pq?' · '+pq+' waiting to send':'')+'</small></h1>'
     +'<button id="bRef">Refresh</button><button id="bOut">Log out</button></header>'
     +'<nav><button data-t="jobs" aria-selected="'+(tab==="jobs")+'">Jobs</button>'
-    +'<button data-t="duty" aria-selected="'+(tab==="duty")+'">Duty</button>'
     +'<button data-t="amc" aria-selected="'+(tab==="amc")+'">AMC</button>'
     +'<button data-t="gmc" aria-selected="'+(tab==="gmc")+'">GMC</button>'
-    +'<button data-t="chk" aria-selected="'+(tab==="chk")+'">Checklist</button>'
-    +'<button data-t="equip" aria-selected="'+(tab==="equip")+'">Equipment</button>'
+    +'<button data-t="chk" aria-selected="'+(tab==="chk")+'">Sites</button>'
     +'<button data-t="tools" aria-selected="'+(tab==="tools")+'">Tools</button>'
     +'<button data-t="hist" aria-selected="'+(tab==="hist")+'">History</button></nav><main>';
   if(!online)h+='<div class="banner b-warn">No signal. Your updates are saved on this phone and will send when the signal returns.</div>';
@@ -405,21 +403,26 @@ function sendChk(status){
   send("t_chk_save",{form:JSON.parse(JSON.stringify(CF))});
 }
 function viewChk(){
-  if(CF)return formHtml();
   if(SD)return sdHtml();
   if(MR)return mrHtml();
-  var h='<button class="btn wide" id="cNew">New checklist</button><div class="row"><button class="btn sec" style="flex:1" id="sdNew">Site data form</button><button class="btn sec" style="flex:1" id="mrNew">Material list</button></div><div style="height:12px"></div>'
-    +mrListHtml();
-  var fl=(S.forms||[]).slice();
-  queue().forEach(function(x){if(x.action==="t_chk_save"&&x.ev&&x.ev.form){var f=x.ev.form;
-    if(!fl.some(function(y){return y.id===f.id;}))fl.unshift({id:f.id,site:f.site,tplName:f.tplName,date:f.date,status:f.status,done:0,total:0,pend:true});}});
-  if(!fl.length)return h+'<div class="empty">No checklists yet. Tap New checklist at a site.<br>Everything you fill is saved and your supervisor can check it later.</div>';
-  return h+fl.map(function(f){
-    var pend=queue().some(function(x){return x.action==="t_chk_save"&&x.ev&&x.ev.form&&x.ev.form.id===f.id;});
-    return '<div class="card"><div style="display:flex;justify-content:space-between;gap:8px"><h3>'+esc(f.site)+'</h3><span class="pill '+(f.status==="final"?'p-Completed':'p-out')+'">'+(f.status==="final"?'Submitted':'Draft')+'</span></div>'
-      +'<div class="sub">'+esc(f.tplName||"")+' · '+esc(dshort(f.date))+(f.total?' · '+f.done+'/'+f.total+' answered':'')+'</div>'
-      +(pend?'<div class="pend">Waiting to send…</div>':'')
-      +'<div class="row"><button class="btn sec" data-copen="'+esc(f.id)+'">'+(f.status==="final"?'View':'Continue')+'</button></div></div>';}).join("");
+  var L=S.sdList||{},sites=siteChoices();
+  var h='<button class="btn wide" id="mrNew">Material list after service</button><div style="height:12px"></div>'+mrListHtml()
+    +'<h3 style="margin:14px 0 4px">Site system scope</h3><div class="sub">Systems and quantity at each site. Open a site to see or update it. It shows who edited last.</div>'
+    +'<input id="siteQ" placeholder="Search site" autocomplete="off" style="margin:8px 0">';
+  if(!sites.length)return h+'<div class="empty">No sites yet.</div>';
+  return h+'<div id="siteList">'+sites.map(function(n){
+    var r=L[n];
+    return '<div class="card" data-sname="'+esc(n.toLowerCase())+'"><h3>'+esc(n)+'</h3>'
+      +'<div class="sub">'+(r?('Last edited by <b>'+esc(r.by)+'</b> \u00b7 '+esc(tm(r.mod))+' \u00b7 '+(r.n||0)+' fields'):'Not filled yet')+'</div>'
+      +'<div class="row"><button class="btn sec" data-sdsite="'+esc(n)+'">'+(r?'Open / edit':'Fill in')+'</button></div></div>';}).join("")+'</div>';
+}
+function sdOpen(site,done){
+  Promise.all([loadSchema(),post(auth({action:"t_site_get",site:site})).catch(function(){return null;})]).then(function(a){
+    if(!a[0]){toast("The form could not load. Check your signal.");if(done)done();return;}
+    var rec=a[1]&&a[1].ok?a[1].rec:null,cached=lsGet(SDK,null);
+    var data=rec?rec.data:((cached&&cached.site===site)?cached.data:{});
+    SD={site:site,data:data,info:rec?("Last edited by "+rec.by+" on "+tm(rec.mod)):"Not filled yet"};
+    sdSaveLocal();if(done)done();draw(true);window.scrollTo(0,0);});
 }
 
 /* ---------- site equipment registers ----------
@@ -655,8 +658,10 @@ function findsHtml(){
       +(ro?'':'<div class="row"><button class="btn sec" data-fdel="'+i+'">Remove</button></div>')+'</div>';}).join("");
 }
 function wireChk(){
-  var b=el("cNew");if(b)b.onclick=newChkModal;
-  b=el("sdNew");if(b)b.onclick=sdPick;
+  var b=el("sdNew");if(b)b.onclick=sdPick;
+  Array.prototype.forEach.call(document.querySelectorAll("[data-sdsite]"),function(x){x.onclick=function(){x.disabled=true;x.textContent="Opening\u2026";sdOpen(x.dataset.sdsite);};});
+  var q=el("siteQ");if(q)q.oninput=function(){var t=q.value.trim().toLowerCase();
+    Array.prototype.forEach.call(document.querySelectorAll("[data-sname]"),function(c){c.style.display=(!t||c.dataset.sname.indexOf(t)>-1)?"":"none";});};
   b=el("mrNew");if(b)b.onclick=mrNewModal;
   Array.prototype.forEach.call(document.querySelectorAll("[data-mropen]"),function(x){x.onclick=function(){openMr(x.dataset.mropen);};});
   if(SD)return wireSd();
@@ -926,8 +931,8 @@ function rowModal(kind,r){
     +'<div id="mGate" class="banner b-warn" style="margin-top:10px;display:none">Tick every item to mark this job completed. Or choose Partly done and write what is remaining.</div>'
     +'<div id="mRemBox" style="display:none"><label>What is remaining (required)</label><textarea id="mRemain"></textarea></div>'
     +'<label>Date of work</label><input type="date" id="mDate" value="'+esc(S.today)+'" max="'+esc(S.today)+'">'
-    +'<label id="mJccL">JCC number (required when all done)</label><input id="mJcc" autocapitalize="characters" autocomplete="off">'
-    +'<label>SR number</label><input id="mSr" autocapitalize="characters" autocomplete="off">'
+    +'<label id="mJccL">JCC number</label><input id="mJcc" autocapitalize="characters" autocomplete="off">'
+    +'<label id="mSrL">SR number</label><input id="mSr" autocapitalize="characters" autocomplete="off">'
     +'<label>What was done / remarks</label><textarea id="mRem"></textarea>'
     +'<div class="sub" style="margin-top:10px">Updated by: <b>'+esc(cfg.name)+'</b>. Your supervisor checks it before it moves to Completed.</div>'
     +'<div id="mErr" class="banner b-bad" style="display:none;margin-top:12px"></div>'
@@ -942,7 +947,8 @@ function rowModal(kind,r){
       btn.textContent=part?"Send update":(ok?"Mark completed":"Mark completed ("+n+"/"+items.length+" ticked)");
       el("mRemBox").style.display=part?"block":"none";
       el("mGate").style.display=(!part&&items.length&&!ok)?"block":"none";
-      el("mJccL").textContent=part?"JCC number (if you have it)":"JCC number (required when all done)";
+      el("mJccL").textContent=kind==="gmc"?(part?"JCC number (if you have it)":"JCC number (required when all done)"):"JCC number (if any)";
+      el("mSrL").textContent=kind==="amc"?(part?"Service report (SR) number (if you have it)":"Service report (SR) number (required when all done)"):"SR number (if any)";
       if(part&&items.length&&!touched){
         var left=[];Array.prototype.forEach.call(boxes,function(c){if(!c.checked)left.push(items[+c.dataset.i]);});
         el("mRemain").value=left.join("; ");}
@@ -956,7 +962,8 @@ function rowModal(kind,r){
       var bad=function(t){var e=el("mErr");e.textContent=t;e.style.display="block";};
       if(!dd)return bad("Pick the date.");
       if(part&&!rem)return bad("Write what is remaining.");
-      if(!part&&!jcc)return bad("Enter the JCC number to mark this completed.");
+      if(!part&&kind==="gmc"&&!jcc)return bad("Enter the JCC number to mark this GMC job completed.");
+      if(!part&&kind==="amc"&&!el("mSr").value.trim())return bad("Enter the service report (SR) number to mark this AMC service completed. The service report is compulsory.");
       var ev={rowKind:kind,rowId:r.id,result:part?"partial":"complete",doneDate:dd,jcc:jcc,sr:el("mSr").value.trim(),remarks:el("mRem").value.trim(),remaining:part?rem:""};
       if(items.length)ev.items={done:m.querySelectorAll("[data-i]:checked").length,total:items.length};
       m.remove();send("t_row",ev);
@@ -1011,7 +1018,6 @@ window.addEventListener("online",function(){online=true;flush().then(refresh);})
 window.addEventListener("offline",function(){online=false;draw();});
 document.addEventListener("visibilitychange",function(){if(!document.hidden&&cfg.pin){flush().then(refresh);}});
 setInterval(function(){if(!document.hidden&&cfg.pin)flush().then(refresh);},60000);
-var sv=lsGet(CFK,null);if(sv&&sv.f){CF=sv.f;CFRO=!!sv.ro;tab='chk';}
 var sv2=lsGet(SDK,null);if(sv2&&sv2.site){SD=sv2;tab='chk';loadSchema().then(function(){draw(true);});}
 var sv3=lsGet(MRK,null);if(sv3&&sv3.f){MR=sv3.f;MRRO=!!sv3.ro;tab='chk';}
 if(cfg.url&&cfg.name&&cfg.pin){var cs=lsGet(S_KEY,null);if(cs&&cs.tech===cfg.name)S=cs;draw();flush().then(refresh);}else draw();
