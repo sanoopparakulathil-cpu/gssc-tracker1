@@ -263,7 +263,7 @@
   </div>
   <div class="top-right"><button id="themeBtn" title="Change colours" style="background:none;border:1px solid currentColor;
     color:inherit;border-radius:3px;font-family:inherit;font-size:11px;padding:2px 7px;cursor:pointer;opacity:.8">Theme</button>
-    <span style="opacity:.75">v39</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
+    <span style="opacity:.75">v40</span><span id="todayLabel"></span><span id="saveState"><span class="dot"></span>Saved</span></div>
 </header>
 
 <nav class="tabs" role="tablist">
@@ -4710,6 +4710,9 @@ function parseGmc(rows){
       cJ=pickCol(H,["JCC No.","JCC No","JCC"]),
       cJD=pickCol(H,["JCC Date"]),
       cSt=pickCol(H,["Status"]),
+      cQ=pickCol(H,["QTN"]),
+      cRp=pickCol(H,["Report"]),
+      cSc=pickCol(H,["Sched","Scheduled"]),
       cR=pickCol(H,["Remarks"]);
   if(cNo<0)return null;
   var out=[];
@@ -4723,7 +4726,10 @@ function parseGmc(rows){
       scope:cS>-1?String(r[cS]||"").trim():"",
       jccNo:cJ>-1?String(r[cJ]||"").trim():"",
       jccDate:cJD>-1?xlDate(r[cJD]):"",
-      status:st.indexOf("COMPLET")>-1?"Completed":(st.indexOf("BALANCE")>-1?"Balance Work":(st.indexOf("HOLD")>-1?"On Hold":"Ongoing")),
+      status:st.indexOf("COMPLET")>-1?"Completed":(st.indexOf("BALANCE")>-1?"Balance Work":(st.indexOf("HOLD")>-1?"On Hold":(st==="OPEN"?"Open":"Ongoing"))),
+      qtn:cQ>-1&&QTN.indexOf(String(r[cQ]||"").trim())>-1?String(r[cQ]).trim():"",
+      report:cRp>-1&&REPORT.indexOf(String(r[cRp]||"").trim())>-1?String(r[cRp]).trim():"",
+      sched:cSc>-1?xlDate(r[cSc]):"",
       remarks:cR>-1?String(r[cR]||"").trim():""});}
   return out.length?out:null;}
 
@@ -4748,11 +4754,14 @@ function importGmcRecords(recs,srcMonth){
       state.gmc.push({id:uid(),month:(r.jccDate?r.jccDate.slice(0,7):(srcMonth||state.curMonth)),
         gmcNo:r.gmcNo,clientRaw:r.clientRaw,client:r.clientRaw,desc:r.desc,scope:r.scope,
         jccNo:r.jccNo,jccDate:r.jccDate,status:r.status,
-        report:r.status==="Completed"?"Signed / JCC received":"Not submitted",
-        qtn:r.status==="Completed"?"Approved":"Sent",schedDate:"",
+        report:r.report||(r.status==="Completed"?"Signed / JCC received":"Not submitted"),
+        qtn:r.qtn||(r.status==="Completed"?"Approved":"Sent"),schedDate:r.sched||"",
         doneDate:r.status==="Completed"?r.jccDate:"",techs:[],remarks:r.remarks,location:""});});
     upd.forEach(function(u){
-      u.ex.status=u.rec.status;
+      if(!(u.ex.status==="Completed"&&u.rec.status!=="Completed"))u.ex.status=u.rec.status;
+      if(u.rec.qtn)u.ex.qtn=u.rec.qtn;
+      if(u.rec.report)u.ex.report=u.rec.report;
+      if(u.rec.sched&&!u.ex.schedDate)u.ex.schedDate=u.rec.sched;
       if(u.rec.jccNo)u.ex.jccNo=u.rec.jccNo;
       if(u.rec.jccDate){u.ex.jccDate=u.rec.jccDate;u.ex.month=u.rec.jccDate.slice(0,7);}
       if(u.rec.remarks)u.ex.remarks=u.rec.remarks;
